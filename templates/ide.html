@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ root_name }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/jsx/jsx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/shell/shell.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/ruby/ruby.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/go/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="theme-dark">
+<div id="app">
+  <div id="topbar">
+    <div class="tb-left">
+      <span class="root-name" title="Project folder">{{ root_name }}</span>
+    </div>
+    <div class="tb-center">
+      <button id="runBtn" class="btn btn-run" title="Run current file (Ctrl+Enter)">&gt; Run</button>
+      <button id="saveBtn" class="btn" title="Save current file (Ctrl+S)">Save</button>
+    </div>
+    <div class="tb-right">
+      <span id="presenceList" class="presence" title="Who's online"></span>
+      <button id="downloadFileBtn" class="btn btn-ghost" title="Download current file">&darr; File</button>
+      <button id="downloadProjectBtn" class="btn btn-ghost" title="Download whole project as .zip">&darr; Project</button>
+      <button id="settingsBtn" class="btn btn-ghost" title="Settings">&equiv;</button>
+      <button id="leaveBtn" class="btn btn-ghost" data-logout-url="{{ url_for('logout') }}">Leave</button>
+    </div>
+  </div>
+
+  <div id="body">
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <span>EXPLORER</span>
+        <span class="sidebar-actions">
+          <button id="newFileBtn" title="New file">+File</button>
+          <button id="newFolderBtn" title="New folder">+Folder</button>
+        </span>
+      </div>
+      <div id="fileTree"></div>
+    </div>
+    <button id="sidebarToggle" title="Toggle explorer">&#9664;</button>
+
+    <div id="main" class="split-vertical">
+      <div id="editorPane">
+        <div id="tabBar"><span id="tabLabel" class="tab-empty">No file open</span></div>
+        <div id="editorHost"></div>
+      </div>
+      <div id="splitHandle" title="Drag to resize"></div>
+      <div id="terminalPane">
+        <div class="terminal-header">
+          <span>TERMINAL</span>
+          <button id="clearTermBtn" title="Clear">Clear</button>
+        </div>
+        <div id="terminalOutput"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="settingsPanel" class="panel hidden">
+  <div class="panel-header"><span>Settings</span><button id="closeSettings">X</button></div>
+  <div class="panel-body">
+    <div class="setting-row">
+      <label>Theme</label>
+      <div class="seg">
+        <button data-theme="dark" class="seg-btn active">Dark</button>
+        <button data-theme="light" class="seg-btn">Light</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label>Editor / Terminal layout</label>
+      <div class="seg">
+        <button data-layout="vertical" class="seg-btn active">Stacked</button>
+        <button data-layout="horizontal" class="seg-btn">Side by side</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.__USERNAME__ = {{ username|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
