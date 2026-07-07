@@ -121,7 +121,10 @@ def create():
                     sid = generate_session_id()
                     root_dir = Config.sessions_dir / sid
                     root_dir.mkdir(parents=True, exist_ok=True)
-                    sessions[sid] = {"password": pw, "root_dir": root_dir, "locked": False}
+                    sessions[sid] = {
+                        "password": pw, "root_dir": root_dir, "locked": False,
+                        "ownership": {},  # rel path -> username of whoever created it
+                    }
                     password_index[pw] = sid
             if not error:
                 session["authed"] = True
@@ -284,6 +287,7 @@ def api_new():
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+    sess.setdefault("ownership", {})[rel] = session["username"]
     socketio.emit("tree_update", {}, room=session["session_id"])
     return jsonify({"ok": True})
 
@@ -309,6 +313,10 @@ def api_move():
     if target.exists():
         abort(400, "Already exists")
     shutil.move(str(src_path), str(target))
+    ownership = sess.setdefault("ownership", {})
+    owner = ownership.pop(src_rel, None)
+    if owner:
+        ownership[str(target.relative_to(sess["root_dir"]))] = owner
     socketio.emit("tree_update", {}, room=session["session_id"])
     return jsonify({"ok": True})
 
@@ -320,11 +328,14 @@ def api_delete():
     sess = current_session()
     data = request.get_json(force=True)
     rel = data.get("path", "")
+    if not is_host() and sess.get("ownership", {}).get(rel) != session["username"]:
+        abort(403, "You can only delete things you created")
     path = safe_resolve(sess["root_dir"], rel)
     if path.is_dir():
         shutil.rmtree(path)
     elif path.is_file():
         path.unlink()
+    sess.get("ownership", {}).pop(rel, None)
     socketio.emit("tree_update", {}, room=session["session_id"])
     return jsonify({"ok": True})
 
@@ -405,10 +416,19 @@ def _handle_session_departure(session_id):
 
 def _presence_list(session_id):
     with users_lock:
-        return [
-            {"username": u["username"], "path": u["path"], "is_host": u.get("is_host", False)}
-            for u in connected_users.values() if u.get("session_id") == session_id
-        ]
+        seen_stokens = set()
+        result = []
+        for u in connected_users.values():
+            if u.get("session_id") != session_id:
+                continue
+            stoken = u.get("stoken")
+            # Same login open in multiple tabs — only list them once.
+            if stoken:
+                if stoken in seen_stokens:
+                    continue
+                seen_stokens.add(stoken)
+            result.append({"username": u["username"], "path": u["path"], "is_host": u.get("is_host", False)})
+        return result
 
 
 @socketio.on("open_file")
@@ -538,9 +558,6 @@ def on_run(data):
             t_out.join()
             t_err.join()
             proc.wait()
-            socketio.emit("run_output", {
-                "stream": "system", "text": f"\n[process exited with code {proc.returncode}]\n"
-            }, room=target_room)
         except FileNotFoundError:
             socketio.emit("run_output", {
                 "stream": "error",
