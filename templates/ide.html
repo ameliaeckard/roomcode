@@ -33,8 +33,13 @@
       <span class="root-name" title="Project folder">{{ root_name }}</span>
     </div>
     <div class="tb-center">
+      {% if is_host %}
       <button id="runBtn" class="btn btn-run" title="Run current file (Ctrl+Enter)">&gt; Run</button>
       <button id="saveBtn" class="btn" title="Save current file (Ctrl+S)">Save</button>
+      <button id="lockToggleBtn" class="btn btn-ghost" title="Lock/unlock editing for everyone else">Lock</button>
+      {% else %}
+      <span id="lockIndicator" class="lock-indicator hidden">Locked by host</span>
+      {% endif %}
     </div>
     <div class="tb-right">
       <span id="presenceList" class="presence" title="Who's online"></span>
@@ -97,6 +102,7 @@
 
 <script>
   window.__USERNAME__ = {{ username|tojson }};
+  window.__IS_HOST__ = {{ is_host|tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

@@ -1,0 +1,11 @@
+.claude/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
+Thumbs.db

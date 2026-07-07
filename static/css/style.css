@@ -127,6 +127,10 @@ button { cursor: pointer; }
 .presence { display: inline-block; flex-shrink: 1; min-width: 0; font-size: 11px; color: var(--text-dim); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .presence-me { color: var(--text-bright); font-weight: 700; }
 .presence-more { color: var(--accent); border-bottom: 1px dotted var(--accent); cursor: default; }
+.presence-host { color: var(--green); }
+
+.lock-indicator { display: flex; align-items: center; color: var(--red); font-size: 12px; font-weight: 700; }
+.lock-indicator.hidden { display: none; }
 
 .btn {
   display: inline-flex;
@@ -145,6 +149,9 @@ button { cursor: pointer; }
 .btn-run { border-color: var(--green); color: var(--green); font-weight: 600; }
 .btn-run:hover { background: var(--green); color: #1d2025; }
 .btn-ghost { background: transparent; }
+.btn:disabled { opacity: 0.35; cursor: default; }
+.btn:disabled:hover { border-color: var(--border); color: var(--text); }
+.btn-run:disabled:hover { background: var(--bg); color: var(--green); }
 
 #body { flex: 1; display: flex; min-height: 0; }
 
@@ -211,6 +218,8 @@ button { cursor: pointer; }
 #main.split-horizontal { flex-direction: row; }
 
 #editorPane { flex: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#editorPane.read-only #editorHost .CodeMirror { opacity: 0.7; }
+#editorPane.read-only #tabBar { border-bottom-color: var(--red); }
 
 #splitHandle { display: flex; flex-shrink: 0; background: var(--bg-elevated); }
 #splitHandle:hover, #splitHandle:active { background: var(--accent); }
@@ -253,7 +262,6 @@ button { cursor: pointer; }
   position: fixed; top: 60px; right: 20px; width: 300px;
   display: flex; flex-direction: column;
   background: var(--bg-elevated); border: 1px solid var(--border);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   z-index: 50;
 }
 .panel.hidden { display: none; }

@@ -6,6 +6,7 @@
   let currentMode = "null";
   let applyingRemoteChange = false;
   let cm = null;
+  let roomLocked = false;
 
   const el = (id) => document.getElementById(id);
 
@@ -171,8 +172,7 @@
     });
   }
 
-  // ---------------- Live selection highlighting ----------------
-  const remoteSelectionMarks = {}; // username -> CodeMirror TextMarker
+  const remoteSelectionMarks = {};
   const remoteUserColors = {};
   const USER_COLOR_PALETTE = ["#e06c75", "#98c379", "#e5c07b", "#c678dd", "#56b6c2", "#d19a66"];
 
@@ -206,7 +206,7 @@
       delete remoteSelectionMarks[data.username];
     }
     const { anchor, head } = data;
-    if (anchor.line === head.line && anchor.ch === head.ch) return; // no selection to show
+    if (anchor.line === head.line && anchor.ch === head.ch) return;
     const backwards = CodeMirror.cmpPos(anchor, head) > 0;
     const from = backwards ? head : anchor;
     const to = backwards ? anchor : head;
@@ -217,12 +217,13 @@
   });
 
   function saveFile() {
+    if (!window.__IS_HOST__) return; // only the host has a Save button
     if (!currentPath) return;
     fetch("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: currentPath, content: cm.getValue() }),
-    }).then(() => flashTab("Saved"));
+    }).then((r) => flashTab(r.ok ? "Saved" : "Locked"));
   }
 
   function flashTab(msg) {
@@ -232,7 +233,8 @@
     setTimeout(() => { label.textContent = original; }, 1200);
   }
 
-  el("saveBtn").addEventListener("click", saveFile);
+  const saveBtnEl = document.getElementById("saveBtn");
+  if (saveBtnEl) saveBtnEl.addEventListener("click", saveFile);
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
@@ -258,23 +260,28 @@
   }
 
   function runFile() {
+    if (!window.__IS_HOST__) return; // only the host has a Run button
     if (!currentPath) {
       appendTermLine("Open a file before running it.\n", "line-error");
       return;
     }
     saveFile();
-    appendTermLine(`\n$ run ${currentPath}\n`, "line-system");
-    el("runBtn").disabled = true;
+    document.getElementById("runBtn").disabled = true;
     socket.emit("run", { path: currentPath });
   }
 
+  // Terminal output and the "$ run ..." line are broadcast from the server
+  // to everyone, so the whole room shares one terminal.
   socket.on("run_output", (data) => {
     const clsMap = { stderr: "line-stderr", error: "line-error", system: "line-system" };
     appendTermLine(data.text, clsMap[data.stream]);
   });
-  socket.on("run_done", () => { el("runBtn").disabled = false; });
+  socket.on("run_done", () => {
+    if (window.__IS_HOST__) document.getElementById("runBtn").disabled = false;
+  });
 
-  el("runBtn").addEventListener("click", runFile);
+  const runBtnEl = document.getElementById("runBtn");
+  if (runBtnEl) runBtnEl.addEventListener("click", runFile);
   el("clearTermBtn").addEventListener("click", () => { el("terminalOutput").innerHTML = ""; });
 
   el("downloadFileBtn").addEventListener("click", () => {
@@ -286,9 +293,6 @@
     window.location = "/api/download-project";
   });
 
-  // ---------------- Leave ----------------
-  // Disconnect explicitly first so the presence list drops us immediately,
-  // rather than waiting on the browser's unload sequence to close the socket.
   el("leaveBtn").addEventListener("click", (e) => {
     const url = e.currentTarget.dataset.logoutUrl;
     socket.disconnect();
@@ -367,7 +371,8 @@
     const shown = list.slice(0, PRESENCE_VISIBLE);
     let html = "Online: " + shown.map((u) => {
       const cls = u.username === window.__USERNAME__ ? ' class="presence-me"' : "";
-      return `<span${cls}>${escapeHtml(u.username)}</span>`;
+      const hostTag = u.is_host ? ' <span class="presence-host">(host)</span>' : "";
+      return `<span${cls}>${escapeHtml(u.username)}</span>${hostTag}`;
     }).join(", ");
     const extra = list.length - PRESENCE_VISIBLE;
     if (extra > 0) {
@@ -418,6 +423,26 @@ function applyTheme(theme, persist) {
     applySidebarCollapsed(!el("sidebar").classList.contains("collapsed"));
   });
   applySidebarCollapsed(localStorage.getItem("roomcode-sidebar-collapsed") === "1");
+
+  // ---------------- Host-controlled edit lock ----------------
+  function applyLockState(locked) {
+    roomLocked = locked;
+    const iAmLocked = locked && !window.__IS_HOST__;
+    cm.setOption("readOnly", iAmLocked);
+    el("editorPane").classList.toggle("read-only", iAmLocked);
+    const indicator = document.getElementById("lockIndicator");
+    if (indicator) indicator.classList.toggle("hidden", !locked);
+    const toggleBtn = document.getElementById("lockToggleBtn");
+    if (toggleBtn) toggleBtn.textContent = locked ? "Unlock" : "Lock";
+  }
+  socket.on("lock_changed", (data) => applyLockState(!!data.locked));
+
+  const lockToggleBtn = document.getElementById("lockToggleBtn");
+  if (lockToggleBtn) {
+    lockToggleBtn.addEventListener("click", () => {
+      socket.emit("set_lock", { locked: !roomLocked });
+    });
+  }
 
   function splitStorageKey() {
     return el("main").classList.contains("split-vertical")

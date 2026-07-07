@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Join Session</title>
+<title>Create Session</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -16,16 +16,16 @@
 </script>
   <div class="join-card">
     <h1>RoomCode</h1>
-    <p class="join-sub">Enter the session password and a name to join.</p>
+    <p class="join-sub">Start a new session, you'll join as its host.</p>
     {% if error %}<div class="join-error">{{ error }}</div>{% endif %}
-    <form method="POST" action="{{ url_for('join') }}" class="join-form">
+    <form method="POST" action="{{ url_for('create') }}" class="join-form">
       <label for="password">Session password</label>
       <input type="password" id="password" name="password" autofocus required>
       <label for="username">Your name</label>
       <input type="text" id="username" name="username" maxlength="32" required>
-      <button type="submit">Join session</button>
+      <button type="submit">Create session</button>
     </form>
-    <p class="join-sub"><a href="{{ url_for('create') }}">Don't have a session? Create one</a></p>
+    <p class="join-sub"><a href="{{ url_for('join') }}">Have a password already? Join a session</a></p>
   </div>
 </body>
 </html>
