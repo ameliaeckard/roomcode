@@ -507,7 +507,7 @@ def on_run(data):
             t_err.join()
             proc.wait()
             socketio.emit("run_output", {
-                "stream": "system", "text": f"\n[process exited with code {proc.returncode}]\n"
+                "stream": "system"
             }, room=sid_room)
         except FileNotFoundError:
             socketio.emit("run_output", {
