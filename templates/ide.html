@@ -5,25 +5,25 @@
 <title>{{ root_name }}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/jsx/jsx.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/shell/shell.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/ruby/ruby.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/go/go.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/codemirror/codemirror.min.css') }}">
+<script src="{{ url_for('static', filename='vendor/codemirror/codemirror.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/python/python.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/javascript/javascript.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/jsx/jsx.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/htmlmixed/htmlmixed.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/css/css.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/markdown/markdown.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/clike/clike.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/shell/shell.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/ruby/ruby.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/go/go.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/sql/sql.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/xml/xml.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/mode/yaml/yaml.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/addon/edit/closebrackets.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/codemirror/addon/selection/active-line.min.js') }}"></script>
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/socketio/socket.io.min.js') }}"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="theme-dark">
