@@ -270,8 +270,6 @@
     socket.emit("run", { path: currentPath });
   }
 
-  // Terminal output and the "$ run ..." line are broadcast from the server
-  // to everyone, so the whole room shares one terminal.
   socket.on("run_output", (data) => {
     const clsMap = { stderr: "line-stderr", error: "line-error", system: "line-system" };
     appendTermLine(data.text, clsMap[data.stream]);
@@ -284,13 +282,22 @@
   if (runBtnEl) runBtnEl.addEventListener("click", runFile);
   el("clearTermBtn").addEventListener("click", () => { el("terminalOutput").innerHTML = ""; });
 
+  function triggerDownload(url) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   el("downloadFileBtn").addEventListener("click", () => {
     if (!currentPath) { alert("Open a file first."); return; }
     saveFile();
-    window.location = "/api/download-file?path=" + encodeURIComponent(currentPath);
+    triggerDownload("/api/download-file?path=" + encodeURIComponent(currentPath));
   });
   el("downloadProjectBtn").addEventListener("click", () => {
-    window.location = "/api/download-project";
+    triggerDownload("/api/download-project");
   });
 
   el("leaveBtn").addEventListener("click", (e) => {
