@@ -153,6 +153,7 @@
   }
 
   function openFile(path) {
+    saveFile(); // persist whatever's open before we discard it for the new file
     fetch("/api/file?path=" + encodeURIComponent(path)).then((r) => r.json()).then((data) => {
       if (data.binary) {
         alert("This file doesn't look like text. You can't open it in the editor.");
@@ -226,11 +227,15 @@
     }).then((r) => flashTab(r.ok ? "Saved" : "Locked"));
   }
 
+  let flashTimeout = null;
   function flashTab(msg) {
     const label = el("tabLabel");
-    const original = label.textContent;
-    label.textContent = `${original}  •  ${msg}`;
-    setTimeout(() => { label.textContent = original; }, 1200);
+    if (flashTimeout) clearTimeout(flashTimeout);
+    label.textContent = `${currentPath}  •  ${msg}`;
+    flashTimeout = setTimeout(() => {
+      label.textContent = currentPath;
+      flashTimeout = null;
+    }, 1200);
   }
 
   const saveBtnEl = document.getElementById("saveBtn");
@@ -242,7 +247,7 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
-      runFile();
+      runFile(window.__IS_HOST__ ? "all" : "local");
     }
   });
 
@@ -259,27 +264,33 @@
     out.scrollTop = out.scrollHeight;
   }
 
-  function runFile() {
-    if (!window.__IS_HOST__) return; // only the host has a Run button
+  function runFile(scope) {
+    // scope "all" (host-only, broadcasts to the whole session) vs "local"
+    // (anyone, but only that one connection ever sees the output).
+    if (scope === "all" && !window.__IS_HOST__) return;
     if (!currentPath) {
       appendTermLine("Open a file before running it.\n", "line-error");
       return;
     }
     saveFile();
-    document.getElementById("runBtn").disabled = true;
-    socket.emit("run", { path: currentPath });
+    const btn = document.getElementById(scope === "all" ? "runBtn" : "runLocalBtn");
+    if (btn) btn.disabled = true;
+    socket.emit("run", { path: currentPath, scope });
   }
 
   socket.on("run_output", (data) => {
     const clsMap = { stderr: "line-stderr", error: "line-error", system: "line-system" };
     appendTermLine(data.text, clsMap[data.stream]);
   });
-  socket.on("run_done", () => {
-    if (window.__IS_HOST__) document.getElementById("runBtn").disabled = false;
+  socket.on("run_done", (data) => {
+    const btn = document.getElementById(data.scope === "all" ? "runBtn" : "runLocalBtn");
+    if (btn) btn.disabled = false;
   });
 
   const runBtnEl = document.getElementById("runBtn");
-  if (runBtnEl) runBtnEl.addEventListener("click", runFile);
+  if (runBtnEl) runBtnEl.addEventListener("click", () => runFile("all"));
+  const runLocalBtnEl = document.getElementById("runLocalBtn");
+  if (runLocalBtnEl) runLocalBtnEl.addEventListener("click", () => runFile("local"));
   el("clearTermBtn").addEventListener("click", () => { el("terminalOutput").innerHTML = ""; });
 
   function triggerDownload(url) {

@@ -51,6 +51,8 @@ button, input {
   font-family: inherit;
 }
 button { cursor: pointer; }
+a, a:visited { color: var(--accent); }
+a:hover { color: var(--text-bright); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); }
 ::-webkit-scrollbar-track { background: var(--bg); }

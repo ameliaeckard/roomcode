@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RoomCode</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="join-body">
+<script>
+(function () {
+  var saved = localStorage.getItem("roomcode-theme");
+  var theme = saved || ((window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
+  document.body.classList.add("theme-" + theme);
+})();
+</script>
+  <div class="join-card">
+    <h1>RoomCode</h1>
+    <div class="seg">
+      <button type="button" class="seg-btn tab-btn{% if active_tab == 'join' %} active{% endif %}" data-tab="join">Join Room</button>
+      <button type="button" class="seg-btn tab-btn{% if active_tab == 'create' %} active{% endif %}" data-tab="create">Create Room</button>
+    </div>
+
+    {% if error %}<div class="join-error">{{ error }}</div>{% endif %}
+
+    <div class="tab-panel" data-panel="join"{% if active_tab != 'join' %} style="display:none"{% endif %}>
+      <p class="join-sub">Enter the session password and a name to join.</p>
+      <form method="POST" action="{{ url_for('join') }}" class="join-form">
+        <label for="join-password">Session password</label>
+        <input type="password" id="join-password" name="password" required>
+        <label for="join-username">Your name</label>
+        <input type="text" id="join-username" name="username" maxlength="32" required>
+        <button type="submit">Join session</button>
+      </form>
+    </div>
+
+    <div class="tab-panel" data-panel="create"{% if active_tab != 'create' %} style="display:none"{% endif %}>
+      <p class="join-sub">Start a new session — you'll join as its host.</p>
+      <form method="POST" action="{{ url_for('create') }}" class="join-form">
+        <label for="create-password">Session password</label>
+        <input type="password" id="create-password" name="password" required>
+        <label for="create-username">Your name</label>
+        <input type="text" id="create-username" name="username" maxlength="32" required>
+        <button type="submit">Create session</button>
+      </form>
+    </div>
+  </div>
+
+<script>
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll(".tab-panel").forEach((p) => {
+        p.style.display = p.dataset.panel === btn.dataset.tab ? "" : "none";
+      });
+      var input = document.querySelector('.tab-panel[data-panel="' + btn.dataset.tab + '"] input');
+      if (input) input.focus();
+    });
+  });
+</script>
+</body>
+</html>

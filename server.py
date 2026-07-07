@@ -130,7 +130,7 @@ def create():
                 session["is_host"] = True
                 session["session_id"] = sid
                 return redirect(url_for("index"))
-    return render_template("create.html", error=error)
+    return render_template("login.html", error=error, active_tab="create")
 
 
 @app.route("/join", methods=["GET", "POST"])
@@ -152,7 +152,7 @@ def join():
             session["is_host"] = False
             session["session_id"] = sid
             return redirect(url_for("index"))
-    return render_template("join.html", error=error)
+    return render_template("login.html", error=error, active_tab="join")
 
 
 @app.route("/logout")
@@ -360,6 +360,9 @@ def on_disconnect():
             session_conn_counts[stoken] = session_conn_counts.get(stoken, 1) - 1
     if sid_room:
         emit("presence", _presence_list(sid_room), room=sid_room)
+        timer = threading.Timer(SESSION_EXPIRE_GRACE_SECONDS, _handle_session_departure, args=(sid_room,))
+        timer.daemon = True
+        timer.start()
     if stoken:
         timer = threading.Timer(SESSION_EXPIRE_GRACE_SECONDS, _expire_session_if_still_gone, args=(stoken,))
         timer.daemon = True
@@ -374,6 +377,30 @@ def _expire_session_if_still_gone(stoken):
         if session_conn_counts.get(stoken, 0) <= 0:
             invalidated_stokens.add(stoken)
             session_conn_counts.pop(stoken, None)
+
+
+def _handle_session_departure(session_id):
+    """Fired a grace period after anyone disconnects from a session — long
+    enough to not react to a page refresh. If no host is left connected,
+    lock editing for whoever remains. If NOBODY is left, delete the
+    session's folder and forget the session entirely."""
+    with users_lock:
+        still_in_session = [u for u in connected_users.values() if u.get("session_id") == session_id]
+    host_present = any(u.get("is_host") for u in still_in_session)
+
+    if not host_present:
+        sess = sessions.get(session_id)
+        if sess and not sess["locked"]:
+            sess["locked"] = True
+            socketio.emit("lock_changed", {"locked": True}, room=session_id)
+
+    if not still_in_session:
+        with sessions_lock:
+            sess = sessions.pop(session_id, None)
+            if sess:
+                password_index.pop(sess["password"], None)
+        if sess:
+            shutil.rmtree(sess["root_dir"], ignore_errors=True)
 
 
 def _presence_list(session_id):
@@ -438,27 +465,31 @@ def on_run(data):
     sid = request.sid
     sess = current_session()
     sid_room = session.get("session_id")
+    # "all" broadcasts to everyone in the session and is host-only. "local"
+    # runs for anyone but only that one connection ever sees the output.
+    scope = data.get("scope") if data.get("scope") in ("all", "local") else "local"
+    target_room = sid_room if scope == "all" else sid
 
-    if not is_host():
-        emit("run_output", {"stream": "error", "text": "Only the host can run code.\n"}, room=sid)
-        emit("run_done", {}, room=sid)
+    if scope == "all" and not is_host():
+        emit("run_output", {"stream": "error", "text": "Only the host can run for everyone.\n"}, room=sid)
+        emit("run_done", {"scope": scope}, room=sid)
         return
     if not sess:
         emit("run_output", {"stream": "error", "text": "Session not found.\n"}, room=sid)
-        emit("run_done", {}, room=sid)
+        emit("run_done", {"scope": scope}, room=sid)
         return
 
     try:
         path = safe_resolve(sess["root_dir"], rel)
     except Exception:
         emit("run_output", {"stream": "error", "text": "Invalid file path.\n"}, room=sid)
-        emit("run_done", {}, room=sid)
+        emit("run_done", {"scope": scope}, room=sid)
         return
 
     ext = path.suffix.lower()
     if not path.is_file():
         emit("run_output", {"stream": "error", "text": "File not found.\n"}, room=sid)
-        emit("run_done", {}, room=sid)
+        emit("run_done", {"scope": scope}, room=sid)
         return
 
     cmd = None
@@ -470,7 +501,7 @@ def on_run(data):
         )
         if compile_proc.returncode != 0:
             emit("run_output", {"stream": "stderr", "text": compile_proc.stderr}, room=sid)
-            emit("run_done", {}, room=sid)
+            emit("run_done", {"scope": scope}, room=sid)
             return
         cmd = ["java", path.stem]
     else:
@@ -480,11 +511,12 @@ def on_run(data):
                 "stream": "error",
                 "text": f"Don't know how to run '{ext}' files.\n"
             }, room=sid)
-            emit("run_done", {}, room=sid)
+            emit("run_done", {"scope": scope}, room=sid)
             return
         cmd = [part.format(file=str(path)) for part in template]
 
-    socketio.emit("run_output", {"stream": "system", "text": f"\n$ run {rel}\n"}, room=sid_room)
+    suffix = "" if scope == "all" else " (local)"
+    socketio.emit("run_output", {"stream": "system", "text": f"\n$ run {rel}{suffix}\n"}, room=target_room)
 
     def stream_process():
         try:
@@ -496,7 +528,7 @@ def on_run(data):
 
             def pump(stream, name):
                 for line in iter(stream.readline, ""):
-                    socketio.emit("run_output", {"stream": name, "text": line}, room=sid_room)
+                    socketio.emit("run_output", {"stream": name, "text": line}, room=target_room)
                 stream.close()
 
             t_out = threading.Thread(target=pump, args=(proc.stdout, "stdout"))
@@ -507,17 +539,17 @@ def on_run(data):
             t_err.join()
             proc.wait()
             socketio.emit("run_output", {
-                "stream": "system"
-            }, room=sid_room)
+                "stream": "system", "text": f"\n[process exited with code {proc.returncode}]\n"
+            }, room=target_room)
         except FileNotFoundError:
             socketio.emit("run_output", {
                 "stream": "error",
                 "text": f"Couldn't find interpreter for this file type (tried: {' '.join(cmd)}).\n"
-            }, room=sid_room)
+            }, room=target_room)
         except Exception as e:
-            socketio.emit("run_output", {"stream": "error", "text": f"Error: {e}\n"}, room=sid_room)
+            socketio.emit("run_output", {"stream": "error", "text": f"Error: {e}\n"}, room=target_room)
         finally:
-            socketio.emit("run_done", {}, room=sid_room)
+            socketio.emit("run_done", {"scope": scope}, room=target_room)
 
     socketio.start_background_task(stream_process)
 

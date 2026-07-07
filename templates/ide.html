@@ -34,10 +34,12 @@
     </div>
     <div class="tb-center">
       {% if is_host %}
-      <button id="runBtn" class="btn btn-run" title="Run current file (Ctrl+Enter)">&gt; Run</button>
+      <button id="runBtn" class="btn btn-run" title="Run for everyone (Ctrl+Enter)">&gt; Run</button>
+      <button id="runLocalBtn" class="btn btn-ghost" title="Run — only visible to you">Run Local</button>
       <button id="saveBtn" class="btn" title="Save current file (Ctrl+S)">Save</button>
       <button id="lockToggleBtn" class="btn btn-ghost" title="Lock/unlock editing for everyone else">Lock</button>
       {% else %}
+      <button id="runLocalBtn" class="btn btn-run" title="Run — only visible to you (Ctrl+Enter)">&gt; Run</button>
       <span id="lockIndicator" class="lock-indicator hidden">Locked by host</span>
       {% endif %}
     </div>
