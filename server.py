@@ -174,6 +174,9 @@ def api_tree():
     if not is_logged_in():
         abort(403)
     sess = current_session()
+    host = is_host()
+    ownership = sess.get("ownership", {})
+    username = session["username"]
 
     def build(dir_path: Path):
         entries = []
@@ -188,13 +191,14 @@ def api_tree():
             if child.name in EXCLUDED_DIR_NAMES or child.name.startswith("."):
                 continue
             rel = str(child.relative_to(sess["root_dir"]))
+            owned = host or ownership.get(rel) == username
             if child.is_dir():
                 entries.append({
-                    "name": child.name, "path": rel, "type": "dir",
+                    "name": child.name, "path": rel, "type": "dir", "owned": owned,
                     "children": build(child)
                 })
             else:
-                entries.append({"name": child.name, "path": rel, "type": "file"})
+                entries.append({"name": child.name, "path": rel, "type": "file", "owned": owned})
         return entries
 
     return jsonify(build(sess["root_dir"]))
@@ -321,6 +325,34 @@ def api_move():
     return jsonify({"ok": True})
 
 
+@app.route("/api/rename", methods=["POST"])
+def api_rename():
+    if not is_logged_in():
+        abort(403)
+    sess = current_session()
+    data = request.get_json(force=True)
+    rel = data.get("path", "")
+    new_name = data.get("newName", "").strip()
+    if not is_host() and sess.get("ownership", {}).get(rel) != session["username"]:
+        abort(403, "You can only rename things you created")
+    if not new_name or "/" in new_name or "\\" in new_name:
+        abort(400, "Invalid name")
+    path = safe_resolve(sess["root_dir"], rel)
+    if not path.exists():
+        abort(404)
+    target = path.parent / new_name
+    if target.exists():
+        abort(400, "Already exists")
+    path.rename(target)
+    new_rel = str(target.relative_to(sess["root_dir"]))
+    ownership = sess.setdefault("ownership", {})
+    owner = ownership.pop(rel, None)
+    if owner:
+        ownership[new_rel] = owner
+    socketio.emit("tree_update", {}, room=session["session_id"])
+    return jsonify({"ok": True, "path": new_rel})
+
+
 @app.route("/api/delete", methods=["POST"])
 def api_delete():
     if not is_logged_in():
@@ -362,16 +394,32 @@ def on_connect():
 def on_disconnect():
     stoken = None
     sid_room = None
+    was_host = False
     with users_lock:
         info = connected_users.pop(request.sid, None)
         if info:
             stoken = info.get("stoken")
             sid_room = info.get("session_id")
+            was_host = info.get("is_host", False)
         if stoken:
             session_conn_counts[stoken] = session_conn_counts.get(stoken, 1) - 1
     if sid_room:
         emit("presence", _presence_list(sid_room), room=sid_room)
-        timer = threading.Timer(SESSION_EXPIRE_GRACE_SECONDS, _handle_session_departure, args=(sid_room,))
+        if was_host:
+            # Lock right away — don't wait for a grace period. If the host
+            # reconnects (e.g. a refresh), they get host status back via
+            # their session cookie and can unlock again themselves.
+            with users_lock:
+                host_still_present = any(
+                    u.get("session_id") == sid_room and u.get("is_host")
+                    for u in connected_users.values()
+                )
+            if not host_still_present:
+                sess = sessions.get(sid_room)
+                if sess and not sess["locked"]:
+                    sess["locked"] = True
+                    socketio.emit("lock_changed", {"locked": True}, room=sid_room)
+        timer = threading.Timer(SESSION_EXPIRE_GRACE_SECONDS, _delete_session_if_empty, args=(sid_room,))
         timer.daemon = True
         timer.start()
     if stoken:
@@ -390,28 +438,20 @@ def _expire_session_if_still_gone(stoken):
             session_conn_counts.pop(stoken, None)
 
 
-def _handle_session_departure(session_id):
-    """Fired a grace period after anyone disconnects from a session — long
-    enough to not react to a page refresh. If no host is left connected,
-    lock editing for whoever remains. If NOBODY is left, delete the
-    session's folder and forget the session entirely."""
+def _delete_session_if_empty(session_id):
+    """Fired a grace period after anyone disconnects — long enough to not
+    react to a page refresh. If truly nobody is left connected, delete the
+    session's folder and forget the session (and its password) entirely."""
     with users_lock:
-        still_in_session = [u for u in connected_users.values() if u.get("session_id") == session_id]
-    host_present = any(u.get("is_host") for u in still_in_session)
-
-    if not host_present:
-        sess = sessions.get(session_id)
-        if sess and not sess["locked"]:
-            sess["locked"] = True
-            socketio.emit("lock_changed", {"locked": True}, room=session_id)
-
-    if not still_in_session:
-        with sessions_lock:
-            sess = sessions.pop(session_id, None)
-            if sess:
-                password_index.pop(sess["password"], None)
+        still_in_session = any(u.get("session_id") == session_id for u in connected_users.values())
+    if still_in_session:
+        return
+    with sessions_lock:
+        sess = sessions.pop(session_id, None)
         if sess:
-            shutil.rmtree(sess["root_dir"], ignore_errors=True)
+            password_index.pop(sess["password"], None)
+    if sess:
+        shutil.rmtree(sess["root_dir"], ignore_errors=True)
 
 
 def _presence_list(session_id):

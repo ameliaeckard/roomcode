@@ -84,6 +84,52 @@
     });
   }
 
+  function startRenameItem(row, node) {
+    if (row.querySelector(".tree-rename-input")) return; // already renaming
+    const labelEl = row.querySelector(".tree-label");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "tree-rename-input";
+    input.value = node.name;
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    function cleanup() {
+      input.removeEventListener("keydown", onKeydown);
+      input.removeEventListener("blur", onBlur);
+      input.replaceWith(labelEl);
+    }
+    function commit() {
+      if (done) return;
+      done = true;
+      const newName = input.value.trim();
+      cleanup();
+      if (!newName || newName === node.name) return;
+      fetch("/api/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: node.path, newName }),
+      }).then((r) => {
+        if (r.ok) loadTree();
+        else alert("Couldn't rename that — the name may already be taken.");
+      });
+    }
+    function cancel() {
+      if (done) return;
+      done = true;
+      cleanup();
+    }
+    function onKeydown(e) {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    }
+    function onBlur() { commit(); }
+    input.addEventListener("keydown", onKeydown);
+    input.addEventListener("blur", onBlur);
+  }
+
   function renderTree(nodes, container) {
     nodes.forEach((node) => {
       const wrap = document.createElement("div");
@@ -94,7 +140,8 @@
       row.dataset.path = node.path;
       row.draggable = true;
       const icon = node.type === "dir" ? "&#9656;" : "-";
-      row.innerHTML = `<span class="tree-icon">${icon}</span><span class="tree-label"></span><span class="tree-delete" title="Delete">x</span>`;
+      const deleteHtml = node.owned ? '<span class="tree-delete" title="Delete">x</span>' : "";
+      row.innerHTML = `<span class="tree-icon">${icon}</span><span class="tree-label"></span>${deleteHtml}`;
       row.querySelector(".tree-label").textContent = node.name;
       wrap.appendChild(row);
 
@@ -105,16 +152,26 @@
       });
       row.addEventListener("dragend", () => row.classList.remove("dragging"));
 
-      row.querySelector(".tree-delete").addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (confirm(`Delete "${node.name}"? This cannot be undone.`)) {
-          fetch("/api/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: node.path }),
-          }).then(loadTree);
-        }
-      });
+      if (node.owned) {
+        row.querySelector(".tree-label").addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          startRenameItem(row, node);
+        });
+      }
+
+      const deleteEl = row.querySelector(".tree-delete");
+      if (deleteEl) {
+        deleteEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete "${node.name}"? This cannot be undone.`)) {
+            fetch("/api/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: node.path }),
+            }).then(loadTree);
+          }
+        });
+      }
 
       if (node.type === "dir") {
         makeDropTarget(row, node.path);
