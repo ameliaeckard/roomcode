@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 import argparse
 import io
 import os
@@ -25,7 +22,7 @@ class Config:
 
 app = Flask(__name__)
 app.secret_key = uuid.uuid4().hex
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 sessions = {}
 password_index = {} 
@@ -547,7 +544,7 @@ def main():
     print(f"Listening on http://{args.host}:{args.port}  (share your LAN IP with others)")
     print("Press Ctrl+C to stop.\n")
 
-    socketio.run(app, host=args.host, port=args.port)
+    socketio.run(app, host=args.host, port=args.port, allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":
