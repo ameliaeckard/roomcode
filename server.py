@@ -68,10 +68,17 @@ app.secret_key = uuid.uuid4().hex
 
 
 def _is_allowed_origin(origin):
-    """Accept only localhost and RFC-1918 private-address origins.
-    Rejects anything that could come from the public internet."""
+    """Accept localhost, RFC-1918 private-address origins, and any origin
+    listed (comma-separated) in the ALLOWED_ORIGINS env var.  Set that var
+    on Railway/cloud deployments where the public domain would otherwise be
+    rejected by the private-IP heuristic."""
     if not origin:
         return True  # same-origin navigations omit the header
+    extra = os.environ.get("ALLOWED_ORIGINS", "")
+    if extra:
+        allowed = {o.strip().rstrip("/") for o in extra.split(",")}
+        if origin.rstrip("/") in allowed:
+            return True
     try:
         host = urlparse(origin).hostname or ""
         if host in ("localhost", "127.0.0.1", "::1"):
@@ -79,7 +86,7 @@ def _is_allowed_origin(origin):
         addr = ipaddress.ip_address(host)
         return addr.is_private
     except ValueError:
-        return False  # hostnames (not IPs) from outside LAN
+        return False  # non-IP public hostnames rejected unless in ALLOWED_ORIGINS
 
 
 socketio = SocketIO(app, cors_allowed_origins=_is_allowed_origin, async_mode="threading")
