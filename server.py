@@ -1,29 +1,7 @@
 """
-RoomCode — a tiny host-and-join coding environment.
-
-Anyone can open the server's address, hit /create to spin up a new
-session (their own isolated project folder, protected by a password they
-choose), and land in as that session's host. Anyone else who knows the
-password can /join the same session as a regular collaborator. Multiple
-sessions can run side by side on one server — each gets its own folder,
-file tree, terminal, and connected users.
-
-Live editing is backed by Yjs (a CRDT): each open file has an
-authoritative Y.Doc held in memory here, patched by everyone's edits and
-periodically flushed to disk, so opening a file always shows the current
-live state (even if you weren't the one editing it) and nothing requires
-a manual, host-only save anymore.
-
-Usage:
-    python3 server.py [--dir /path/to/sessions] [--port 5000]
-
-Then share http://<host-lan-ip>:<port> — the first visitor creates a
-session there.
-
-SECURITY NOTE: This app lets connected users execute code on the host
-machine via the Run button (host-only). Only run it on networks you
-trust, and only share passwords with people you trust. Do not expose
-this directly to the public internet without accepting that risk.
+server.py
+updated 2026-07-14 by Amelia Eckard
+Flask + Socket.IO backend for RoomCode - manages sessions, file I/O, Yjs live sync, and subprocess code execution.
 """
 
 import argparse
@@ -44,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 try:
-    import resource  # POSIX only -- used for best-effort Run resource limits
+    import resource
 except ImportError:
     resource = None
 
@@ -55,10 +33,9 @@ from flask import (
 )
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
-# --------------------------------------------------------------------------
-# Config (populated from CLI args in main())
-# --------------------------------------------------------------------------
+
 class Config:
+    """Runtime configuration populated from CLI args in main()."""
     sessions_dir: Path = None
     port: int = 5000
 
@@ -68,12 +45,11 @@ app.secret_key = uuid.uuid4().hex
 
 
 def _is_allowed_origin(origin):
-    """Accept localhost, RFC-1918 private-address origins, and any origin
-    listed (comma-separated) in the ALLOWED_ORIGINS env var.  Set that var
-    on Railway/cloud deployments where the public domain would otherwise be
-    rejected by the private-IP heuristic."""
+    """Accept localhost, RFC-1918 private-address origins, and any origin listed
+    (comma-separated) in the ALLOWED_ORIGINS env var. Set that var on Railway/cloud
+    deployments where the public domain would otherwise be rejected by the private-IP heuristic."""
     if not origin:
-        return True  # same-origin navigations omit the header
+        return True
     extra = os.environ.get("ALLOWED_ORIGINS", "")
     if extra:
         allowed = {o.strip().rstrip("/") for o in extra.split(",")}
@@ -86,28 +62,16 @@ def _is_allowed_origin(origin):
         addr = ipaddress.ip_address(host)
         return addr.is_private
     except ValueError:
-        return False  # non-IP public hostnames rejected unless in ALLOWED_ORIGINS
+        return False
 
 
 socketio = SocketIO(app, cors_allowed_origins=_is_allowed_origin, async_mode="threading")
 
-# session_id -> {
-#   "password": str, "root_dir": Path, "locked": bool,
-#   "ownership": {rel_path: username},       # who created each file/folder
-#   "promoted_hosts": {username, ...},       # hosts besides the main host
-#   "ydocs": {rel_path: Y.YDoc},             # authoritative live document
-#   "dirty_docs": {rel_path, ...},           # awaiting the next autosave flush
-#   "last_editor": {rel_path: username},     # for the edit-history log
-#   "history": [{"ts", "username", "path"}], # recent save events, capped
-#   "awareness_states": {rel_path: {client_id: bytes}},  # latest cursor blobs
-# }
 sessions = {}
-password_index = {}  # password -> session_id
+password_index = {}
 sessions_lock = threading.Lock()
 
-# --------------------------------------------------------------------------
-# CSRF
-# --------------------------------------------------------------------------
+
 def _csrf_token() -> str:
     """Return (creating if needed) the CSRF token for this browser session."""
     if "csrf_token" not in session:
@@ -117,8 +81,7 @@ def _csrf_token() -> str:
 
 def _check_csrf():
     """Abort 403 if the request does not carry a valid CSRF token.
-    Form POSTs send it as the hidden field '_csrf'; JSON requests send it
-    as the X-CSRF-Token header."""
+    Form POSTs send it as the hidden field '_csrf'; JSON requests send it as X-CSRF-Token."""
     token = request.headers.get("X-CSRF-Token") or request.form.get("_csrf", "")
     expected = session.get("csrf_token", "")
     if not token or not expected or not hmac.compare_digest(token, expected):
@@ -127,20 +90,18 @@ def _check_csrf():
 
 @app.context_processor
 def _inject_csrf():
+    """Inject the csrf_token callable into all Jinja templates."""
     return {"csrf_token": _csrf_token}
 
 
-# --------------------------------------------------------------------------
-# Rate limiting for /join
-# --------------------------------------------------------------------------
-_join_attempts: dict[str, list[float]] = {}  # ip -> [timestamps of recent attempts]
+_join_attempts: dict[str, list[float]] = {}
 _join_lock = threading.Lock()
-JOIN_RATE_WINDOW = 60.0   # seconds
-JOIN_MAX_ATTEMPTS = 10    # per window per IP
+JOIN_RATE_WINDOW = 60.0
+JOIN_MAX_ATTEMPTS = 10
 
 
 def _is_join_rate_ok(ip: str) -> bool:
-    """Return True if this IP has not exceeded the failed-attempt limit."""
+    """Return True if this IP has not exceeded the failed-attempt rate limit."""
     now = time.time()
     with _join_lock:
         attempts = [t for t in _join_attempts.get(ip, []) if now - t < JOIN_RATE_WINDOW]
@@ -148,7 +109,7 @@ def _is_join_rate_ok(ip: str) -> bool:
 
 
 def _record_join_failure(ip: str) -> None:
-    """Record a failed (wrong-password) join attempt for rate limiting."""
+    """Record one wrong-password attempt against this IP for rate limiting."""
     now = time.time()
     with _join_lock:
         attempts = [t for t in _join_attempts.get(ip, []) if now - t < JOIN_RATE_WINDOW]
@@ -156,30 +117,19 @@ def _record_join_failure(ip: str) -> None:
         _join_attempts[ip] = attempts
 
 
-# sid -> {"username", "path", "stoken", "session_id", "is_host", "is_main_host"}
 connected_users = {}
 users_lock = threading.Lock()
 
-# Guards the *dict structure* holding each session's ydocs (so two threads
-# can't both decide a file has no doc yet and create two separate ones for
-# it) — separate from the single-thread rule below, which guards the actual
-# Y.Doc objects themselves.
 ydocs_lock = threading.Lock()
 AUTOSAVE_INTERVAL_SECONDS = 2.0
 HISTORY_LIMIT = 200
 
-# y_py's YDoc is a Rust object (via PyO3) that is NOT safe to touch from any
-# thread other than the one that created it -- it hard-panics ("YDoc is
-# unsendable, but sent to another thread") if you do, which takes down
-# whatever request thread hit it. Flask-SocketIO's threading mode hands
-# different requests to different worker threads, so every single call into
-# a Y.Doc (construction, apply_update, encode_state_as_update, get_text...)
-# is funneled through one dedicated worker thread via this queue instead of
-# being called directly.
 _yjs_queue = queue.Queue()
 
 
 def _yjs_worker_loop():
+    """Dedicated thread that serializes all Y.Doc operations.
+    y_py's YDoc is not thread-safe, so every Y.Doc call is dispatched here via a queue."""
     while True:
         fn, result_box, done = _yjs_queue.get()
         try:
@@ -190,6 +140,7 @@ def _yjs_worker_loop():
 
 
 def run_on_yjs_thread(fn):
+    """Submit a callable to the Yjs worker thread and block until it returns."""
     result_box = {}
     done = threading.Event()
     _yjs_queue.put((fn, result_box, done))
@@ -198,16 +149,12 @@ def run_on_yjs_thread(fn):
         raise result_box["error"]
     return result_box.get("value")
 
-# Per-login-session bookkeeping so closing a tab fully logs the user out
-# (session token invalidated) without punishing an ordinary page refresh
-# (a live socket reconnects within the grace period below).
-session_conn_counts = {}
-invalidated_stokens: dict[str, float] = {}  # stoken -> time.time() when invalidated
-SESSION_EXPIRE_GRACE_SECONDS = 10.0
-STOKEN_PRUNE_AFTER = 3600.0  # drop invalidated tokens from memory after 1 hour
 
-# target_room -> the Popen currently running for that room, so typed input
-# can be routed to the right process's stdin.
+session_conn_counts = {}
+invalidated_stokens: dict[str, float] = {}
+SESSION_EXPIRE_GRACE_SECONDS = 10.0
+STOKEN_PRUNE_AFTER = 3600.0
+
 running_processes = {}
 running_processes_lock = threading.Lock()
 
@@ -218,7 +165,7 @@ RUNNERS = {
     ".sh": ["bash", "{file}"],
     ".rb": ["ruby", "{file}"],
     ".go": ["go", "run", "{file}"],
-    ".java": None,  # needs compile step, handled specially
+    ".java": None,
 }
 
 CODEMIRROR_MODES = {
@@ -232,29 +179,14 @@ CODEMIRROR_MODES = {
 
 EXCLUDED_DIR_NAMES = {".git", "__pycache__", "node_modules", ".venv", "venv", ".idea", ".vscode"}
 
-# --------------------------------------------------------------------------
-# Run-feature hardening
-#
-# There's no real sandbox here (no container/chroot/restricted OS user) --
-# a script run via Run/Run Local has the same filesystem/network access as
-# the server process itself, and reaching real isolation would need actual
-# containers or per-session OS accounts, a much bigger infra change. This is
-# a best-effort layer that closes two concrete gaps that don't need that:
-# leaking the server's own environment (secrets, DB URLs, etc.) into
-# arbitrary user code, and unbounded CPU/memory/disk usage from a runaway
-# or malicious script.
-# --------------------------------------------------------------------------
 RUN_ENV_PASSTHROUGH = {"path", "systemroot", "windir", "comspec", "pathext", "lang", "lc_all", "temp", "tmp"}
 RUN_CPU_SECONDS = 30
-RUN_MEMORY_BYTES = 1024 * 1024 * 1024  # 1 GB address space
-RUN_MAX_FILE_BYTES = 200 * 1024 * 1024  # 200 MB for any single file the script writes
+RUN_MEMORY_BYTES = 1024 * 1024 * 1024
+RUN_MAX_FILE_BYTES = 200 * 1024 * 1024
 
 
 def _build_run_env(home_dir):
-    """A minimal environment for Run subprocesses -- explicitly NOT a copy
-    of the server's own os.environ, which could otherwise hand a malicious
-    script access to secrets (DB URLs, API keys, etc.) that have nothing to
-    do with running code."""
+    """Build a minimal subprocess environment that does not inherit the server's secrets."""
     env = {"PYTHONUNBUFFERED": "1", "HOME": str(home_dir)}
     for key, value in os.environ.items():
         if key.lower() in RUN_ENV_PASSTHROUGH:
@@ -263,14 +195,10 @@ def _build_run_env(home_dir):
 
 
 def _limit_run_resources():
-    """Runs inside the child, right after fork and before exec -- POSIX
-    only (subprocess.Popen rejects preexec_fn entirely on Windows, so this
-    is never even passed there). Deliberately does NOT set RLIMIT_NPROC:
-    that's charged against the whole real UID, which every thread of the
-    main server process shares, so a low value here could start failing
-    unrelated to anything this particular run does."""
+    """Set POSIX resource limits inside the child process before exec.
+    Called via preexec_fn - only runs on POSIX, never on Windows."""
     try:
-        os.setsid()  # own process group, so we can reliably kill the whole tree later
+        os.setsid()
     except Exception:
         pass
     for limit, value in (
@@ -285,9 +213,7 @@ def _limit_run_resources():
 
 
 def _kill_running_process(target_room):
-    """Force-kill (whole process group, on POSIX) whatever Run process is
-    tracked under target_room, if any. Used so a run doesn't keep consuming
-    resources after the session it belongs to is gone."""
+    """Force-kill the process tracked under target_room, if any."""
     with running_processes_lock:
         proc = running_processes.pop(target_room, None)
     if proc is None or proc.poll() is not None:
@@ -301,12 +227,8 @@ def _kill_running_process(target_room):
         pass
 
 
-# --------------------------------------------------------------------------
-# Session/auth helpers
-# --------------------------------------------------------------------------
 def safe_resolve(root_dir: Path, rel_path: str) -> Path:
-    """Resolve a client-supplied relative path under root_dir, refusing to
-    let it escape that session's folder."""
+    """Resolve a client-supplied relative path under root_dir, refusing to let it escape that folder."""
     rel_path = (rel_path or "").lstrip("/\\")
     candidate = (root_dir / rel_path).resolve()
     root = root_dir.resolve()
@@ -316,24 +238,28 @@ def safe_resolve(root_dir: Path, rel_path: str) -> Path:
 
 
 def current_session():
+    """Return the session dict for the currently logged-in user, or None."""
     sid = session.get("session_id")
     return sessions.get(sid) if sid else None
 
 
 def is_logged_in() -> bool:
+    """Return True if the current request belongs to an active, authenticated session."""
     if not (session.get("authed") is True and session.get("username")):
         return False
     stoken = session.get("stoken")
-    if stoken and stoken in invalidated_stokens:  # dict membership — O(1), same as set
+    if stoken and stoken in invalidated_stokens:
         return False
     return current_session() is not None
 
 
 def is_main_host() -> bool:
+    """Return True if the current user is the original creator of the session."""
     return session.get("is_main_host") is True
 
 
 def is_host() -> bool:
+    """Return True if the current user has host privileges (main host or promoted)."""
     if is_main_host():
         return True
     sess = current_session()
@@ -341,18 +267,16 @@ def is_host() -> bool:
 
 
 def generate_session_id() -> str:
+    """Generate a unique 8-character hex session ID not already in use."""
     while True:
         sid = uuid.uuid4().hex[:8]
         if sid not in sessions:
             return sid
 
 
-# --------------------------------------------------------------------------
-# Yjs document helpers
-# --------------------------------------------------------------------------
 def _get_or_create_ydoc_unlocked(sess, rel):
-    """Caller must already hold ydocs_lock. The Y.Doc itself is always
-    constructed on the dedicated Yjs worker thread (see run_on_yjs_thread)."""
+    """Return the Y.Doc for rel, creating and seeding it from disk if it doesn't exist yet.
+    Caller must hold ydocs_lock."""
     ydoc = sess.setdefault("ydocs", {}).get(rel)
     if ydoc is None:
         initial = ""
@@ -377,7 +301,7 @@ def _get_or_create_ydoc_unlocked(sess, rel):
 
 
 def get_doc_text(sess, rel):
-    """Current authoritative content for rel, if it's being live-edited."""
+    """Return the current live text for rel from its in-memory Y.Doc, or None if not loaded."""
     with ydocs_lock:
         ydoc = sess.get("ydocs", {}).get(rel)
     if ydoc is None:
@@ -386,6 +310,7 @@ def get_doc_text(sess, rel):
 
 
 def _flush_doc(sess, rel):
+    """Write the Y.Doc for rel to disk and append a save event to the history log."""
     with ydocs_lock:
         ydoc = sess.get("ydocs", {}).get(rel)
     if ydoc is None:
@@ -407,6 +332,8 @@ def _flush_doc(sess, rel):
 
 
 def _autosave_loop():
+    """Background thread that flushes dirty Y.Docs to disk every AUTOSAVE_INTERVAL_SECONDS
+    and prunes expired session tokens from memory."""
     while True:
         time.sleep(AUTOSAVE_INTERVAL_SECONDS)
         with sessions_lock:
@@ -419,8 +346,6 @@ def _autosave_loop():
             dirty.clear()
             for rel in to_flush:
                 _flush_doc(sess, rel)
-        # Prune invalidated stokens that are old enough to never appear in an
-        # active browser session, so the dict doesn't grow without bound.
         cutoff = time.time() - STOKEN_PRUNE_AFTER
         with users_lock:
             stale = [t for t, ts in invalidated_stokens.items() if ts < cutoff]
@@ -428,22 +353,21 @@ def _autosave_loop():
                 del invalidated_stokens[t]
 
 
-# --------------------------------------------------------------------------
-# HTTP routes
-# --------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def index():
+    """Serve the main IDE page, or redirect to /join if not authenticated."""
     if not is_logged_in():
         return redirect(url_for("join"))
     sess = current_session()
     return render_template(
         "ide.html", username=session["username"], root_name=sess["root_dir"].name,
-        is_host=is_host(),
+        is_host=is_host(), is_main_host=is_main_host(),
     )
 
 
 @app.route("/create", methods=["GET", "POST"])
 def create():
+    """Create a new session. The creator becomes its main host."""
     error = None
     if request.method == "POST":
         _check_csrf()
@@ -456,7 +380,7 @@ def create():
         else:
             with sessions_lock:
                 if pw in password_index:
-                    error = "That password is already in use — pick a different one."
+                    error = "That password is already in use - pick a different one."
                 else:
                     sid = generate_session_id()
                     root_dir = Config.sessions_dir / sid
@@ -480,12 +404,13 @@ def create():
 
 @app.route("/join", methods=["GET", "POST"])
 def join():
+    """Join an existing session by password. Rate-limits failed attempts per IP."""
     error = None
     if request.method == "POST":
         _check_csrf()
         ip = request.remote_addr or ""
         if not _is_join_rate_ok(ip):
-            error = "Too many attempts — please wait a minute."
+            error = "Too many attempts - please wait a minute."
         else:
             pw = request.form.get("password", "")
             name = request.form.get("username", "").strip()[:32]
@@ -497,15 +422,13 @@ def join():
             elif not name:
                 error = "Please enter a name."
             else:
-                # Enforce unique display names within a session so promote_host
-                # (which matches by name) can't accidentally target two people.
                 with users_lock:
                     name_taken = any(
                         u.get("session_id") == sid and u.get("username") == name
                         for u in connected_users.values()
                     )
                 if name_taken:
-                    error = "That name is already taken in this session — pick another."
+                    error = "That name is already taken in this session - pick another."
                 else:
                     session["authed"] = True
                     session["username"] = name
@@ -518,6 +441,7 @@ def join():
 
 @app.route("/logout")
 def logout():
+    """Invalidate the current user's session token and redirect to /join."""
     stoken = session.get("stoken")
     if stoken:
         with users_lock:
@@ -529,6 +453,7 @@ def logout():
 
 @app.route("/api/tree")
 def api_tree():
+    """Return the session's file tree as nested JSON, annotated with per-item ownership flags."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -564,6 +489,7 @@ def api_tree():
 
 @app.route("/api/file")
 def api_file():
+    """Return file content, CodeMirror mode, and binary flag for the requested path."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -590,9 +516,8 @@ def api_file():
 
 @app.route("/api/file-meta")
 def api_file_meta():
-    """Return only syntax-mode and binary flag for a path — no file content.
-    Used by the editor to set up CodeMirror mode; the actual text comes
-    from the Yjs sync response, so we don't need to transmit it twice."""
+    """Return only syntax mode and binary flag - no file content.
+    Used by the editor to configure CodeMirror before Yjs delivers the actual text."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -617,8 +542,7 @@ def api_file_meta():
 
 @app.route("/api/save", methods=["POST"])
 def api_save():
-    """Force an immediate flush. Auto-save already runs continuously in the
-    background — this is just a manual 'do it now' for peace of mind."""
+    """Force an immediate flush of the Yjs doc to disk. Non-hosts are blocked when the session is locked."""
     if not is_logged_in():
         abort(403)
     _check_csrf()
@@ -632,19 +556,16 @@ def api_save():
         abort(400)
     live = get_doc_text(sess, rel)
     if live is not None:
-        # Flush the authoritative Yjs document — ignore any content in the request body.
         path.write_text(live, encoding="utf-8")
         sess.get("dirty_docs", set()).discard(rel)
     else:
-        # No live doc yet (file was never opened collaboratively). The lock check
-        # above already blocked non-hosts, so this path is only reached by hosts
-        # or when the session is unlocked.
         path.write_text(data.get("content", ""), encoding="utf-8")
     return jsonify({"ok": True})
 
 
 @app.route("/api/download-file")
 def api_download_file():
+    """Serve the current file as a download, using live Y.Doc content if available."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -661,6 +582,7 @@ def api_download_file():
 
 @app.route("/api/download-project")
 def api_download_project():
+    """Bundle the entire session folder into a ZIP and serve it as a download."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -684,6 +606,7 @@ def api_download_project():
 
 @app.route("/api/new", methods=["POST"])
 def api_new():
+    """Create a new file or directory in the session, recording the creator as owner."""
     if not is_logged_in():
         abort(403)
     _check_csrf()
@@ -706,6 +629,7 @@ def api_new():
 
 @app.route("/api/move", methods=["POST"])
 def api_move():
+    """Move a file or directory to a new parent folder within the session."""
     if not is_logged_in():
         abort(403)
     _check_csrf()
@@ -741,6 +665,7 @@ def api_move():
 
 @app.route("/api/rename", methods=["POST"])
 def api_rename():
+    """Rename a file or directory. Non-hosts can only rename items they own."""
     if not is_logged_in():
         abort(403)
     _check_csrf()
@@ -774,6 +699,7 @@ def api_rename():
 
 @app.route("/api/delete", methods=["POST"])
 def api_delete():
+    """Delete a file or directory. Non-hosts can only delete items they own."""
     if not is_logged_in():
         abort(403)
     _check_csrf()
@@ -796,6 +722,7 @@ def api_delete():
 
 @app.route("/api/room-info")
 def api_room_info():
+    """Return the session password. Host only."""
     if not is_logged_in():
         abort(403)
     if not is_host():
@@ -806,6 +733,7 @@ def api_room_info():
 
 @app.route("/api/history")
 def api_history():
+    """Return recent save events for the session, optionally filtered by file path."""
     if not is_logged_in():
         abort(403)
     sess = current_session()
@@ -816,15 +744,11 @@ def api_history():
     return jsonify(list(reversed(history)))
 
 
-# --------------------------------------------------------------------------
-# Socket.IO — presence, live editing (Yjs), run
-# --------------------------------------------------------------------------
 @socketio.on("connect")
 def on_connect(auth=None):
+    """Authenticate the socket connection via session cookie and CSRF token in the auth payload."""
     if not is_logged_in():
         return False
-    # CSRF check for the WebSocket upgrade — the browser sends the token in
-    # the socket.io auth payload (see app.js io() call).
     csrf = (auth or {}).get("csrf_token", "")
     expected = session.get("csrf_token", "")
     if not csrf or not expected or not hmac.compare_digest(csrf, expected):
@@ -846,6 +770,7 @@ def on_connect(auth=None):
 
 @socketio.on("disconnect")
 def on_disconnect():
+    """Clean up on socket disconnect: update presence, lock if main host left, start expiry timers."""
     stoken = None
     sid_room = None
     was_main_host = False
@@ -857,20 +782,10 @@ def on_disconnect():
             was_main_host = info.get("is_main_host", False)
         if stoken:
             session_conn_counts[stoken] = session_conn_counts.get(stoken, 1) - 1
-    # A "local" scope run is keyed by this exact socket sid and was only
-    # ever visible to this one connection -- once it's gone, nobody can see
-    # or interact with that process anymore, so there's no reason to let it
-    # keep running (a reconnect gets a fresh sid and would start a new run
-    # from scratch anyway, same as clicking Run again).
     _kill_running_process(request.sid)
     if sid_room:
         emit("presence", _presence_list(sid_room), room=sid_room)
         if was_main_host:
-            # Lock right away — don't wait for a grace period. If the main
-            # host reconnects (e.g. a refresh), they get host status back
-            # via their session cookie and can unlock again themselves.
-            # Regular users and promoted (non-main) hosts leaving never
-            # trigger this.
             with users_lock:
                 main_host_still_present = any(
                     u.get("session_id") == sid_room and u.get("is_main_host")
@@ -891,9 +806,7 @@ def on_disconnect():
 
 
 def _expire_session_if_still_gone(stoken):
-    """Invalidate a login session once its last socket has been gone for the
-    grace period — long enough to survive a page refresh, short enough that
-    actually closing the tab logs the user out."""
+    """Invalidate a login session once its last socket has been gone for the grace period."""
     with users_lock:
         if session_conn_counts.get(stoken, 0) <= 0:
             invalidated_stokens[stoken] = time.time()
@@ -901,10 +814,7 @@ def _expire_session_if_still_gone(stoken):
 
 
 def _delete_session_if_empty(session_id):
-    """Fired a grace period after anyone disconnects — long enough to not
-    react to a page refresh. If truly nobody is left connected, flush
-    anything unsaved, then delete the session's folder and forget the
-    session (and its password) entirely."""
+    """If no one is still connected after the grace period, flush unsaved docs and delete the session folder."""
     with users_lock:
         still_in_session = any(u.get("session_id") == session_id for u in connected_users.values())
     if still_in_session:
@@ -916,11 +826,12 @@ def _delete_session_if_empty(session_id):
     if sess:
         for rel in list(sess.get("dirty_docs", set())):
             _flush_doc(sess, rel)
-        _kill_running_process(session_id)  # a broadcast ("all" scope) run, if any, has no session left to run for
+        _kill_running_process(session_id)
         shutil.rmtree(sess["root_dir"], ignore_errors=True)
 
 
 def _presence_list(session_id):
+    """Build the presence list for a session, deduplicating users with multiple tabs open."""
     with users_lock:
         seen_stokens = set()
         result = []
@@ -928,7 +839,6 @@ def _presence_list(session_id):
             if u.get("session_id") != session_id:
                 continue
             stoken = u.get("stoken")
-            # Same login open in multiple tabs — only list them once.
             if stoken:
                 if stoken in seen_stokens:
                     continue
@@ -942,7 +852,7 @@ def _presence_list(session_id):
 
 @socketio.on("open_file")
 def on_open_file(data):
-    """Track which file each user is viewing so edits route to the right room."""
+    """Track which file each user is viewing so Yjs updates route to the right per-file room."""
     rel = data.get("path")
     sid_room = session["session_id"]
     with users_lock:
@@ -958,8 +868,7 @@ def on_open_file(data):
 
 @socketio.on("yjs_sync")
 def on_yjs_sync(data):
-    """A client just opened a file — hand them the full current Yjs state
-    (this session's authoritative copy) plus any cursors already in it."""
+    """Send the full current Yjs state for a file to the requesting client, plus any saved cursor positions."""
     sess = current_session()
     rel = data.get("path")
     if not sess or not rel:
@@ -974,15 +883,14 @@ def on_yjs_sync(data):
 
 @socketio.on("yjs_update")
 def on_yjs_update(data):
-    """Apply an editor's change to this session's authoritative document,
-    then relay the same update to everyone else viewing that file."""
+    """Apply an incoming Yjs update to the authoritative server doc, then broadcast it to co-editors."""
     rel = data.get("path")
     update = data.get("update")
     if not rel or update is None:
         return
     sess = current_session()
     if not sess or (sess["locked"] and not is_host()):
-        return  # editing is locked for non-hosts — silently drop the change
+        return
     with ydocs_lock:
         ydoc = _get_or_create_ydoc_unlocked(sess, rel)
     update_bytes = bytes(update)
@@ -995,9 +903,7 @@ def on_yjs_update(data):
 
 @socketio.on("awareness_update")
 def on_awareness_update(data):
-    """Relay cursor/selection presence (Yjs Awareness) to other viewers of
-    this file, and remember the latest per-client state so a brand-new
-    viewer can see everyone's cursor immediately, not just future moves."""
+    """Relay cursor/selection state to co-editors and cache it so new joiners see it immediately."""
     rel = data.get("path")
     update = data.get("update")
     client_id = data.get("clientId")
@@ -1013,6 +919,7 @@ def on_awareness_update(data):
 
 @socketio.on("set_lock")
 def on_set_lock(data):
+    """Toggle the session-wide edit lock. Host only."""
     if not is_host():
         return
     sess = current_session()
@@ -1024,9 +931,7 @@ def on_set_lock(data):
 
 @socketio.on("promote_host")
 def on_promote_host(data):
-    """Grant another connected user host privileges for this session.
-    Doesn't touch the auto-lock-on-departure behavior — that's tied
-    specifically to the main host, never a promoted one."""
+    """Grant host privileges to another connected user. Host only."""
     if not is_host():
         return
     sess = current_session()
@@ -1047,14 +952,37 @@ def on_promote_host(data):
     emit("presence", _presence_list(sid_room), room=sid_room)
 
 
+@socketio.on("demote_host")
+def on_demote_host(data):
+    """Revoke host privileges from a promoted user. Main host only."""
+    if not is_main_host():
+        return
+    sess = current_session()
+    target = (data.get("username") or "").strip()
+    if not sess or not target:
+        return
+    sess.get("promoted_hosts", set()).discard(target)
+    sid_room = session["session_id"]
+    with users_lock:
+        affected_sids = [
+            sid for sid, u in connected_users.items()
+            if u.get("session_id") == sid_room and u.get("username") == target
+        ]
+        for sid in affected_sids:
+            connected_users[sid]["is_host"] = False
+    for sid in affected_sids:
+        socketio.emit("host_status_changed", {"is_host": False}, room=sid)
+    emit("presence", _presence_list(sid_room), room=sid_room)
+
+
 @socketio.on("run")
 def on_run(data):
+    """Execute a file in a subprocess. Scope 'all' broadcasts to the whole session (host only);
+    'local' streams output only to the requesting socket."""
     rel = data.get("path", "")
     sid = request.sid
     sess = current_session()
     sid_room = session.get("session_id")
-    # "all" broadcasts to everyone in the session and is host-only. "local"
-    # runs for anyone but only that one connection ever sees the output.
     scope = data.get("scope") if data.get("scope") in ("all", "local") else "local"
     target_room = sid_room if scope == "all" else sid
 
@@ -1081,8 +1009,6 @@ def on_run(data):
         return
 
     if ext == ".java":
-        # cmd=None signals stream_process to compile first (keeps the socket
-        # handler non-blocking — javac on a large file can take a few seconds).
         cmd = None
     else:
         template = RUNNERS.get(ext)
@@ -1099,10 +1025,9 @@ def on_run(data):
     socketio.emit("run_output", {"stream": "system", "text": f"\n$ run {rel}{suffix}\n"}, room=target_room)
 
     def stream_process():
+        """Run in a background thread: execute the command, stream stdout/stderr back over the socket."""
         actual_cmd = cmd
         if actual_cmd is None:
-            # Java: compile first, then run. Done here so javac doesn't block
-            # the SocketIO event thread.
             compile_proc = subprocess.run(
                 ["javac", str(path)], cwd=str(path.parent),
                 capture_output=True, text=True, env=_build_run_env(path.parent),
@@ -1119,16 +1044,9 @@ def on_run(data):
                 cwd=str(path.parent),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
-                # Force Python to line-buffer/flush even though stdout is a
-                # pipe rather than a real terminal — otherwise input()
-                # prompts sit in a buffer and never reach us, deadlocking
-                # anything interactive.
                 env=_build_run_env(path.parent),
             )
             if resource is not None:
-                # preexec_fn is POSIX-only -- subprocess.Popen raises if you
-                # even pass it (not just call it) on Windows, so this must
-                # stay gated on the same check used to import `resource`.
                 popen_kwargs["preexec_fn"] = _limit_run_resources
             proc = subprocess.Popen(actual_cmd, **popen_kwargs)
             with running_processes_lock:
@@ -1136,13 +1054,7 @@ def on_run(data):
             socketio.emit("run_started", {"scope": scope}, room=target_room)
 
             def pump(stream, name):
-                # Read raw, whatever-is-available chunks from the fd directly
-                # rather than line-by-line: readline() blocks until it sees a
-                # trailing newline, but an input() prompt is written with
-                # none, so it would sit buffered forever waiting for input
-                # that depends on the prompt actually being shown first — a
-                # deadlock. os.read() returns as soon as any data is ready,
-                # whether that's a lone prompt or several full lines.
+                """Read raw chunks from fd and emit them as run_output events."""
                 fd = stream.fileno()
                 while True:
                     try:
@@ -1186,8 +1098,7 @@ def on_run(data):
 
 @socketio.on("run_input")
 def on_run_input(data):
-    """Send a typed line to the stdin of whatever's currently running for
-    this room, so scripts that call input() can be answered."""
+    """Forward typed input to the stdin of the currently running process."""
     sess = current_session()
     if not sess:
         return
@@ -1200,8 +1111,6 @@ def on_run_input(data):
         proc = running_processes.get(target_room)
     if not proc or not proc.stdin or proc.stdin.closed:
         return
-    # Echo before writing — the child could print its response the instant
-    # stdin unblocks it, racing our own echo if we emitted it second.
     socketio.emit("run_output", {"stream": "stdin", "text": text + "\n"}, room=target_room)
     try:
         proc.stdin.write(text + "\n")
@@ -1210,19 +1119,16 @@ def on_run_input(data):
         return
 
 
-# --------------------------------------------------------------------------
-# Entrypoint
-# --------------------------------------------------------------------------
 def main():
+    """Parse CLI args, start background threads, and run the Flask-SocketIO server."""
     parser = argparse.ArgumentParser(description="Run the RoomCode host server.")
     parser.add_argument(
         "--dir", default=os.environ.get("PROJECT_DIR"),
-        help="Base directory to store session folders in (each session gets its own "
-             "subfolder here, named after its session id). Defaults to ./sessions.",
+        help="Base directory for session folders. Defaults to ./sessions.",
     )
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 5000)),
                          help="Port to listen on (default 5000, or $PORT if set).")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default 0.0.0.0, i.e. all interfaces).")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default 0.0.0.0).")
     args = parser.parse_args()
 
     base = Path(args.dir).expanduser().resolve() if args.dir else Path(__file__).parent / "sessions"

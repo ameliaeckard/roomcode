@@ -1,3 +1,7 @@
+/* style.css
+   updated 2026-07-14 by Amelia Eckard
+   All styles for RoomCode - light/dark themes, layout, editor, terminal, file tree, and settings panel. */
+
 :root.theme-dark, body.theme-dark {
   --bg: #282c34;
   --bg-elevated: #21252b;
@@ -158,6 +162,13 @@ a:hover { color: var(--text-bright); }
 
 .host-only { display: none; }
 body.is-host .host-only { display: inline-flex; }
+
+.main-host-only { display: none; }
+body.is-main-host .main-host-only { display: block; }
+
+.current-hosts-list { display: flex; flex-direction: column; gap: 4px; }
+.current-host-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.current-host-row .btn-revoke { margin-left: auto; }
 
 #body { flex: 1; display: flex; min-height: 0; }
 
@@ -351,7 +362,6 @@ body.is-host .host-only { display: inline-flex; }
 .cm-s-roomcode-dark .cm-negative, .cm-s-roomcode-light .cm-negative,
 .cm-s-roomcode-dark .cm-error, .cm-s-roomcode-light .cm-error { color: var(--red); }
 
-/* Remote cursors + name tags, rendered by y-codemirror's CodemirrorBinding */
 .remote-caret {
   position: absolute;
   border-left: 2px solid black;

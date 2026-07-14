@@ -1,3 +1,8 @@
+<!--
+  ide.html
+  updated 2026-07-14 by Amelia Eckard
+  Main IDE shell - topbar, sidebar file tree, editor/terminal split, settings panel, and history panel.
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,10 +31,6 @@
 
 <script src="{{ url_for('static', filename='vendor/socketio/socket.io.min.js') }}"></script>
 
-<!-- The Yjs stack only has ~20 bare "lib0/x" specifiers left unresolved
-     (yjs.mjs and lib0/random.js import them directly); y-codemirror.js and
-     y-protocols-awareness.js were rewritten at vendor time to use relative
-     paths instead, so they need no entries here. -->
 <script type="importmap">
 {
   "imports": {
@@ -67,7 +68,7 @@
     </div>
     <div class="tb-center">
       <button id="runBtn" class="btn btn-run host-only" title="Run for everyone (Ctrl+Enter)">&gt; Run</button>
-      <button id="runLocalBtn" class="btn btn-ghost" title="Run — only visible to you">Run Local</button>
+      <button id="runLocalBtn" class="btn btn-ghost" title="Run - only visible to you">Run Local</button>
       <button id="saveBtn" class="btn" title="Save current file (Ctrl+S)">Save</button>
       <button id="lockToggleBtn" class="btn btn-ghost host-only" title="Lock/unlock editing for everyone else">Lock</button>
       <span id="lockIndicator" class="lock-indicator hidden">Locked by host</span>
@@ -109,7 +110,7 @@
         </div>
         <div id="terminalOutput"></div>
         <div id="runInputRow" class="run-input-row hidden">
-          <input type="text" id="runInput" placeholder="Program is waiting for input — type here and press Enter">
+          <input type="text" id="runInput" placeholder="Program is waiting for input - type here and press Enter">
         </div>
       </div>
     </div>
@@ -147,12 +148,19 @@
           <button id="revealPasswordBtn" class="btn btn-ghost btn-small">Show</button>
         </div>
       </div>
+    </div>
+
+    <div class="setting-section main-host-only">
       <div class="setting-row">
         <label>Add hosts</label>
         <div class="setting-inline">
           <select id="promoteHostSelect"></select>
           <button id="promoteHostBtn" class="btn btn-ghost btn-small">Make host</button>
         </div>
+      </div>
+      <div class="setting-row" id="currentHostsRow" style="display:none">
+        <label>Current hosts</label>
+        <div id="currentHostsList" class="current-hosts-list"></div>
       </div>
     </div>
 
@@ -172,6 +180,7 @@
 <script>
   window.__USERNAME__ = {{ username|tojson }};
   window.__IS_HOST__ = {{ is_host|tojson }};
+  window.__IS_MAIN_HOST__ = {{ is_main_host|tojson }};
 </script>
 <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

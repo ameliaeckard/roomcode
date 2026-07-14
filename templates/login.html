@@ -1,3 +1,8 @@
+<!--
+  login.html
+  updated 2026-07-14 by Amelia Eckard
+  Join/Create landing page - tabbed form for entering a session password and display name.
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,7 +41,7 @@
     </div>
 
     <div class="tab-panel" data-panel="create"{% if active_tab != 'create' %} style="display:none"{% endif %}>
-      <p class="join-sub">Start a new session — you'll join as its host.</p>
+      <p class="join-sub">Start a new session - you'll join as its host.</p>
       <form method="POST" action="{{ url_for('create') }}" class="join-form">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <label for="create-password">Session password</label>
