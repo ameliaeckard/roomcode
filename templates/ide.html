@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>{{ root_name }}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 
 <link rel="stylesheet" href="{{ url_for('static', filename='vendor/codemirror/codemirror.min.css') }}">
 <script src="{{ url_for('static', filename='vendor/codemirror/codemirror.min.js') }}"></script>
@@ -24,6 +25,38 @@
 <script src="{{ url_for('static', filename='vendor/codemirror/addon/selection/active-line.min.js') }}"></script>
 
 <script src="{{ url_for('static', filename='vendor/socketio/socket.io.min.js') }}"></script>
+
+<!-- The Yjs stack only has ~20 bare "lib0/x" specifiers left unresolved
+     (yjs.mjs and lib0/random.js import them directly); y-codemirror.js and
+     y-protocols-awareness.js were rewritten at vendor time to use relative
+     paths instead, so they need no entries here. -->
+<script type="importmap">
+{
+  "imports": {
+    "lib0/array": "{{ url_for('static', filename='vendor/yjs/lib0/array.js') }}",
+    "lib0/binary": "{{ url_for('static', filename='vendor/yjs/lib0/binary.js') }}",
+    "lib0/buffer": "{{ url_for('static', filename='vendor/yjs/lib0/buffer.js') }}",
+    "lib0/decoding": "{{ url_for('static', filename='vendor/yjs/lib0/decoding.js') }}",
+    "lib0/encoding": "{{ url_for('static', filename='vendor/yjs/lib0/encoding.js') }}",
+    "lib0/environment": "{{ url_for('static', filename='vendor/yjs/lib0/environment.js') }}",
+    "lib0/error": "{{ url_for('static', filename='vendor/yjs/lib0/error.js') }}",
+    "lib0/function": "{{ url_for('static', filename='vendor/yjs/lib0/function.js') }}",
+    "lib0/iterator": "{{ url_for('static', filename='vendor/yjs/lib0/iterator.js') }}",
+    "lib0/logging": "{{ url_for('static', filename='vendor/yjs/lib0/logging.js') }}",
+    "lib0/map": "{{ url_for('static', filename='vendor/yjs/lib0/map.js') }}",
+    "lib0/math": "{{ url_for('static', filename='vendor/yjs/lib0/math.js') }}",
+    "lib0/object": "{{ url_for('static', filename='vendor/yjs/lib0/object.js') }}",
+    "lib0/observable": "{{ url_for('static', filename='vendor/yjs/lib0/observable.js') }}",
+    "lib0/promise": "{{ url_for('static', filename='vendor/yjs/lib0/promise.js') }}",
+    "lib0/random": "{{ url_for('static', filename='vendor/yjs/lib0/random.js') }}",
+    "lib0/set": "{{ url_for('static', filename='vendor/yjs/lib0/set.js') }}",
+    "lib0/string": "{{ url_for('static', filename='vendor/yjs/lib0/string.js') }}",
+    "lib0/time": "{{ url_for('static', filename='vendor/yjs/lib0/time.js') }}",
+    "lib0/webcrypto": "{{ url_for('static', filename='vendor/yjs/lib0/webcrypto.js') }}"
+  }
+}
+</script>
+
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="theme-dark">
@@ -33,22 +66,17 @@
       <span class="root-name" title="Project folder">{{ root_name }}</span>
     </div>
     <div class="tb-center">
-      {% if is_host %}
-      <button id="runBtn" class="btn btn-run" title="Run for everyone (Ctrl+Enter)">&gt; Run</button>
+      <button id="runBtn" class="btn btn-run host-only" title="Run for everyone (Ctrl+Enter)">&gt; Run</button>
       <button id="runLocalBtn" class="btn btn-ghost" title="Run — only visible to you">Run Local</button>
       <button id="saveBtn" class="btn" title="Save current file (Ctrl+S)">Save</button>
-      <button id="lockToggleBtn" class="btn btn-ghost" title="Lock/unlock editing for everyone else">Lock</button>
-      {% else %}
-      <button id="runLocalBtn" class="btn btn-run" title="Run — only visible to you (Ctrl+Enter)">&gt; Run</button>
+      <button id="lockToggleBtn" class="btn btn-ghost host-only" title="Lock/unlock editing for everyone else">Lock</button>
       <span id="lockIndicator" class="lock-indicator hidden">Locked by host</span>
-      {% endif %}
     </div>
     <div class="tb-right">
       <span id="presenceList" class="presence" title="Who's online"></span>
       <button id="downloadFileBtn" class="btn btn-ghost" title="Download current file">&darr; File</button>
       <button id="downloadProjectBtn" class="btn btn-ghost" title="Download whole project as .zip">&darr; Project</button>
       <button id="settingsBtn" class="btn btn-ghost" title="Settings">&equiv;</button>
-      <button id="leaveBtn" class="btn btn-ghost" data-logout-url="{{ url_for('logout') }}">Leave</button>
     </div>
   </div>
 
@@ -67,7 +95,10 @@
 
     <div id="main" class="split-vertical">
       <div id="editorPane">
-        <div id="tabBar"><span id="tabLabel" class="tab-empty">No file open</span></div>
+        <div id="tabBar">
+          <span id="tabLabel" class="tab-empty">No file open</span>
+          <button id="fileHistoryBtn" class="btn btn-ghost btn-small hidden" title="Edit history for this file">History</button>
+        </div>
         <div id="editorHost"></div>
       </div>
       <div id="splitHandle" title="Drag to resize"></div>
@@ -77,6 +108,9 @@
           <button id="clearTermBtn" title="Clear">Clear</button>
         </div>
         <div id="terminalOutput"></div>
+        <div id="runInputRow" class="run-input-row hidden">
+          <input type="text" id="runInput" placeholder="Program is waiting for input — type here and press Enter">
+        </div>
       </div>
     </div>
   </div>
@@ -99,6 +133,39 @@
         <button data-layout="horizontal" class="seg-btn">Side by side</button>
       </div>
     </div>
+
+    <div class="setting-section">
+      <div class="setting-row"><label id="participantsLabel">Participants</label></div>
+      <div id="participantsList" class="participants-list"></div>
+    </div>
+
+    <div class="setting-section host-only">
+      <div class="setting-row">
+        <label>Room password</label>
+        <div class="setting-inline">
+          <span id="roomPasswordValue" class="room-password-value">•••••••</span>
+          <button id="revealPasswordBtn" class="btn btn-ghost btn-small">Show</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Add hosts</label>
+        <div class="setting-inline">
+          <select id="promoteHostSelect"></select>
+          <button id="promoteHostBtn" class="btn btn-ghost btn-small">Make host</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-section">
+      <button id="leaveBtn" class="btn btn-ghost" data-logout-url="{{ url_for('logout') }}">Leave session</button>
+    </div>
+  </div>
+</div>
+
+<div id="historyPanel" class="panel hidden">
+  <div class="panel-header"><span id="historyPanelTitle">History</span><button id="closeHistory">X</button></div>
+  <div class="panel-body">
+    <div id="historyList" class="history-list"></div>
   </div>
 </div>
 
@@ -106,6 +173,6 @@
   window.__USERNAME__ = {{ username|tojson }};
   window.__IS_HOST__ = {{ is_host|tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

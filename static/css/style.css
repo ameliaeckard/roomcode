@@ -154,6 +154,10 @@ a:hover { color: var(--text-bright); }
 .btn:disabled { opacity: 0.35; cursor: default; }
 .btn:disabled:hover { border-color: var(--border); color: var(--text); }
 .btn-run:disabled:hover { background: var(--bg); color: var(--green); }
+.btn-small { padding: 4px 8px; font-size: 11px; }
+
+.host-only { display: none; }
+body.is-host .host-only { display: inline-flex; }
 
 #body { flex: 1; display: flex; min-height: 0; }
 
@@ -232,12 +236,13 @@ a:hover { color: var(--text-bright); }
   height: 34px; flex-shrink: 0;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; padding: 0 12px;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
   font-size: 12px;
   color: var(--text-bright);
 }
 .tab-empty { display: flex; color: var(--text-dim); }
 #tabLabel { display: flex; }
+#fileHistoryBtn.hidden { display: none; }
 #editorHost { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 #editorHost .CodeMirror { height: 100%; width: 100%; font-size: 13px; }
 
@@ -259,6 +264,16 @@ a:hover { color: var(--text-bright); }
 .line-stderr { color: var(--red); }
 .line-error { color: var(--red); font-weight: 600; }
 .line-system { color: var(--text-dim); font-style: italic; }
+.line-stdin { color: var(--accent); }
+
+.run-input-row { display: flex; flex-shrink: 0; border-top: 1px solid var(--border); }
+.run-input-row.hidden { display: none; }
+.run-input-row input {
+  display: flex; flex: 1;
+  background: var(--input-bg); color: var(--text-bright);
+  border: none; font-family: inherit; font-size: 12.5px;
+  padding: 6px 12px;
+}
 
 .panel {
   position: fixed; top: 60px; right: 20px; width: 300px;
@@ -274,7 +289,7 @@ a:hover { color: var(--text-bright); }
 }
 .panel-header button { display: inline-flex; background: none; border: none; color: var(--text-dim); font-size: 14px; }
 .panel-header button:hover { color: var(--red); }
-.panel-body { display: flex; flex-direction: column; padding: 14px; gap: 14px; }
+.panel-body { display: flex; flex-direction: column; padding: 14px; gap: 14px; max-height: 80vh; overflow: auto; }
 .setting-row { display: flex; flex-direction: column; }
 .setting-row label { display: flex; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
 .seg { display: flex; border: 1px solid var(--border); }
@@ -283,6 +298,20 @@ a:hover { color: var(--text-bright); }
   flex: 1; padding: 6px 0; background: var(--bg); border: none; color: var(--text); font-size: 12px;
 }
 .seg-btn.active { background: var(--accent); color: #ffffff; }
+
+.setting-section { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 14px; }
+.setting-inline { display: flex; align-items: center; gap: 8px; }
+.setting-inline select {
+  flex: 1; min-width: 0;
+  background: var(--input-bg); color: var(--text-bright);
+  border: 1px solid var(--border); font-family: inherit; font-size: 12px; padding: 5px 6px;
+}
+.room-password-value { display: flex; font-size: 12px; color: var(--text-bright); font-weight: 600; letter-spacing: 0.05em; }
+.participants-list { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow: auto; font-size: 12px; }
+.history-list { display: flex; flex-direction: column; gap: 4px; max-height: 400px; overflow: auto; font-size: 12px; }
+.participant-row { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.history-row { display: flex; justify-content: space-between; gap: 8px; color: var(--text-dim); }
+.history-time { display: flex; flex-shrink: 0; color: var(--text-dim); }
 
 .cm-s-roomcode-dark.CodeMirror, .cm-s-roomcode-light.CodeMirror {
   background: var(--bg); color: var(--text);
@@ -321,3 +350,27 @@ a:hover { color: var(--text-bright); }
 .cm-s-roomcode-dark .cm-header, .cm-s-roomcode-light .cm-header { color: var(--func); font-weight: 600; }
 .cm-s-roomcode-dark .cm-negative, .cm-s-roomcode-light .cm-negative,
 .cm-s-roomcode-dark .cm-error, .cm-s-roomcode-light .cm-error { color: var(--red); }
+
+/* Remote cursors + name tags, rendered by y-codemirror's CodemirrorBinding */
+.remote-caret {
+  position: absolute;
+  border-left: 2px solid black;
+  height: 1.2em;
+}
+.remote-caret > div {
+  position: relative;
+  top: -1.05em;
+  font-size: 11px;
+  font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
+  font-style: normal;
+  font-weight: 600;
+  line-height: normal;
+  user-select: none;
+  color: #ffffff;
+  padding: 0 4px;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.3s ease-in-out;
+}
+.remote-caret.hide-name > div { opacity: 0; }
+.remote-caret:hover > div { opacity: 1; }

@@ -26,6 +26,7 @@
     <div class="tab-panel" data-panel="join"{% if active_tab != 'join' %} style="display:none"{% endif %}>
       <p class="join-sub">Enter the session password and a name to join.</p>
       <form method="POST" action="{{ url_for('join') }}" class="join-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <label for="join-password">Session password</label>
         <input type="password" id="join-password" name="password" required>
         <label for="join-username">Your name</label>
@@ -37,6 +38,7 @@
     <div class="tab-panel" data-panel="create"{% if active_tab != 'create' %} style="display:none"{% endif %}>
       <p class="join-sub">Start a new session — you'll join as its host.</p>
       <form method="POST" action="{{ url_for('create') }}" class="join-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <label for="create-password">Session password</label>
         <input type="password" id="create-password" name="password" required>
         <label for="create-username">Your name</label>

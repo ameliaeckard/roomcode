@@ -1,12 +1,20 @@
+import * as Y from "/static/vendor/yjs/yjs.mjs";
+import { CodemirrorBinding } from "/static/vendor/yjs/y-codemirror.js";
+import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/vendor/yjs/y-protocols-awareness.js";
+
 (function () {
   "use strict";
 
-  const socket = io();
+  const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+  const socket = io({ auth: { csrf_token: csrfToken } });
   let currentPath = null;
   let currentMode = "null";
-  let applyingRemoteChange = false;
   let cm = null;
   let roomLocked = false;
+
+  // Live collaborative state for whichever file is currently open. Torn
+  // down and rebuilt from scratch every time the open file changes.
+  let yState = null; // { path, ydoc, awareness, binding }
 
   const el = (id) => document.getElementById(id);
 
@@ -21,45 +29,14 @@
     mode: "null",
   });
 
-  cm.on("change", (instance, changeObj) => {
-    if (applyingRemoteChange || !currentPath) return;
-    if (changeObj.origin === "setValue") return;
-    socket.emit("edit", {
-      path: currentPath,
-      change: {
-        from: changeObj.from,
-        to: changeObj.to,
-        text: changeObj.text,
-        removed: changeObj.removed,
-        origin: changeObj.origin,
-      },
-    });
-  });
-
-  socket.on("edit", (data) => {
-    if (data.path !== currentPath) return;
-    const c = data.change;
-    applyingRemoteChange = true;
-    cm.replaceRange(c.text.join("\n"), c.from, c.to, "remote");
-    applyingRemoteChange = false;
-  });
-
-  socket.on("file_changed", (data) => {
-    if (data.path !== currentPath || applyingRemoteChange) return;
-    if (cm.getValue() === data.content) return;
-    const cursor = cm.getCursor();
-    applyingRemoteChange = true;
-    cm.setValue(data.content);
-    cm.setCursor(cursor);
-    applyingRemoteChange = false;
-  });
-
   socket.on("tree_update", loadTree);
+
+  const jsonHeaders = () => ({ "Content-Type": "application/json", "X-CSRF-Token": csrfToken });
 
   function moveItem(src, destDir) {
     fetch("/api/move", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ src, destDir }),
     }).then((r) => {
       if (r.ok) loadTree();
@@ -109,7 +86,7 @@
       if (!newName || newName === node.name) return;
       fetch("/api/rename", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({ path: node.path, newName }),
       }).then((r) => {
         if (r.ok) loadTree();
@@ -130,7 +107,7 @@
     input.addEventListener("blur", onBlur);
   }
 
-  function renderTree(nodes, container) {
+  function renderTree(nodes, container, expandedPaths = new Set()) {
     nodes.forEach((node) => {
       const wrap = document.createElement("div");
       wrap.className = "tree-node";
@@ -166,7 +143,7 @@
           if (confirm(`Delete "${node.name}"? This cannot be undone.`)) {
             fetch("/api/delete", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: jsonHeaders(),
               body: JSON.stringify({ path: node.path }),
             }).then(loadTree);
           }
@@ -177,10 +154,12 @@
         makeDropTarget(row, node.path);
         const childrenDiv = document.createElement("div");
         childrenDiv.className = "tree-children";
-        childrenDiv.style.display = "none";
-        renderTree(node.children || [], childrenDiv);
-        wrap.appendChild(childrenDiv);
+        const isExpanded = expandedPaths.has(node.path);
+        childrenDiv.style.display = isExpanded ? "flex" : "none";
         const iconEl = row.querySelector(".tree-icon");
+        iconEl.innerHTML = isExpanded ? "&#9662;" : "&#9656;";
+        renderTree(node.children || [], childrenDiv, expandedPaths);
+        wrap.appendChild(childrenDiv);
         row.addEventListener("click", () => {
           const open = childrenDiv.style.display === "none";
           childrenDiv.style.display = open ? "flex" : "none";
@@ -196,8 +175,16 @@
   function loadTree() {
     fetch("/api/tree").then((r) => r.json()).then((data) => {
       const container = el("fileTree");
+      // Remember which folders are open so a tree_update doesn't collapse them.
+      const expandedPaths = new Set();
+      container.querySelectorAll(".tree-children").forEach((ch) => {
+        if (ch.style.display !== "none") {
+          const row = ch.closest(".tree-node").querySelector(".tree-row");
+          if (row && row.dataset.path) expandedPaths.add(row.dataset.path);
+        }
+      });
       container.innerHTML = "";
-      renderTree(data, container);
+      renderTree(data, container, expandedPaths);
     });
   }
 
@@ -209,28 +196,6 @@
     if (row) row.classList.add("active");
   }
 
-  function openFile(path) {
-    saveFile(); // persist whatever's open before we discard it for the new file
-    fetch("/api/file?path=" + encodeURIComponent(path)).then((r) => r.json()).then((data) => {
-      if (data.binary) {
-        alert("This file doesn't look like text. You can't open it in the editor.");
-        return;
-      }
-      currentPath = data.path;
-      currentMode = data.mode;
-      applyingRemoteChange = true;
-      cm.setValue(data.content);
-      cm.setOption("mode", currentMode);
-      applyingRemoteChange = false;
-      el("tabLabel").textContent = data.path;
-      el("tabLabel").classList.remove("tab-empty");
-      markActiveRow(path);
-      clearRemoteSelections();
-      socket.emit("open_file", { path: data.path });
-    });
-  }
-
-  const remoteSelectionMarks = {};
   const remoteUserColors = {};
   const USER_COLOR_PALETTE = ["#e06c75", "#98c379", "#e5c07b", "#c678dd", "#56b6c2", "#d19a66"];
 
@@ -243,44 +208,86 @@
     return color;
   }
 
-  function clearRemoteSelections() {
-    Object.values(remoteSelectionMarks).forEach((mark) => mark.clear());
-    Object.keys(remoteSelectionMarks).forEach((k) => delete remoteSelectionMarks[k]);
+  // Yjs keeps everyone's edits merged live (no more "last save wins"), and
+  // y-codemirror's binding renders everyone else's cursor with their name
+  // attached directly on top of the editor — this replaces the old
+  // hand-rolled change-relay and selection-highlight code entirely.
+  function teardownYjsState() {
+    if (!yState) return;
+    if (yState.binding) yState.binding.destroy();
+    if (yState.awareness) yState.awareness.destroy();
+    yState = null;
   }
 
-  cm.on("cursorActivity", () => {
-    if (!currentPath || applyingRemoteChange) return;
-    socket.emit("cursor", {
-      path: currentPath,
-      anchor: cm.getCursor("anchor"),
-      head: cm.getCursor("head"),
+  function setupYjsState(path) {
+    teardownYjsState();
+    const ydoc = new Y.Doc();
+    const awareness = new Awareness(ydoc);
+    awareness.setLocalStateField("user", { name: window.__USERNAME__, color: colorForUser(window.__USERNAME__) });
+
+    const state = { path, ydoc, awareness, binding: null };
+    yState = state;
+
+    ydoc.on("update", (update, origin) => {
+      if (origin === "remote" || yState !== state) return;
+      socket.emit("yjs_update", { path, update });
     });
+    awareness.on("update", ({ added, updated, removed }) => {
+      if (yState !== state) return;
+      const changed = added.concat(updated, removed);
+      const update = encodeAwarenessUpdate(awareness, changed);
+      socket.emit("awareness_update", { path, update, clientId: ydoc.clientID });
+    });
+
+    socket.emit("yjs_sync", { path });
+  }
+
+  socket.on("yjs_sync_response", (data) => {
+    if (!yState || data.path !== yState.path || yState.binding) return;
+    Y.applyUpdate(yState.ydoc, new Uint8Array(data.state), "remote");
+    const ytext = yState.ydoc.getText("content");
+    yState.binding = new CodemirrorBinding(ytext, cm, yState.awareness);
   });
 
-  socket.on("cursor", (data) => {
-    if (data.path !== currentPath || !data.username) return;
-    if (remoteSelectionMarks[data.username]) {
-      remoteSelectionMarks[data.username].clear();
-      delete remoteSelectionMarks[data.username];
-    }
-    const { anchor, head } = data;
-    if (anchor.line === head.line && anchor.ch === head.ch) return;
-    const backwards = CodeMirror.cmpPos(anchor, head) > 0;
-    const from = backwards ? head : anchor;
-    const to = backwards ? anchor : head;
-    remoteSelectionMarks[data.username] = cm.markText(from, to, {
-      css: `background: ${colorForUser(data.username)}55;`,
-      title: data.username,
-    });
+  socket.on("yjs_update", (data) => {
+    if (!yState || data.path !== yState.path) return;
+    Y.applyUpdate(yState.ydoc, new Uint8Array(data.update), "remote");
   });
+
+  socket.on("awareness_update", (data) => {
+    if (!yState || data.path !== yState.path) return;
+    applyAwarenessUpdate(yState.awareness, new Uint8Array(data.update), "remote");
+  });
+
+  function openFile(path) {
+    // /api/file-meta returns only mode + binary flag — no file content.
+    // Actual text arrives via the Yjs sync response, so there's no point
+    // sending it twice over the wire.
+    fetch("/api/file-meta?path=" + encodeURIComponent(path)).then((r) => r.json()).then((data) => {
+      if (data.binary) {
+        alert("This file doesn't look like text. You can't open it in the editor.");
+        return;
+      }
+      currentPath = data.path;
+      currentMode = data.mode;
+      cm.setOption("mode", currentMode);
+      el("tabLabel").textContent = data.path;
+      el("tabLabel").classList.remove("tab-empty");
+      markActiveRow(path);
+      setupYjsState(data.path);
+      socket.emit("open_file", { path: data.path });
+      const historyBtn = el("fileHistoryBtn");
+      if (historyBtn) historyBtn.classList.remove("hidden");
+      el("historyPanel").classList.add("hidden");
+    });
+  }
 
   function saveFile() {
-    if (!window.__IS_HOST__) return; // only the host has a Save button
     if (!currentPath) return;
     fetch("/api/save", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: currentPath, content: cm.getValue() }),
+      headers: jsonHeaders(),
+      body: JSON.stringify({ path: currentPath }),
     }).then((r) => flashTab(r.ok ? "Saved" : "Locked"));
   }
 
@@ -308,16 +315,28 @@
     }
   });
 
+  // Output can now arrive in arbitrary chunks (even a single character, so
+  // an input() prompt with no trailing newline shows up promptly) rather
+  // than one full line at a time. Keep appending to the same open line
+  // until an actual "\n" closes it, instead of starting a new block per
+  // chunk — otherwise a prompt streamed a character at a time would render
+  // as one letter per row instead of a sentence.
+  let openTermLine = null;
+  function ensureTermLine(cls) {
+    if (!openTermLine) {
+      openTermLine = document.createElement("div");
+      openTermLine.className = "term-line" + (cls ? " " + cls : "");
+      el("terminalOutput").appendChild(openTermLine);
+    }
+    return openTermLine;
+  }
   function appendTermLine(text, cls) {
-    const out = el("terminalOutput");
-    const lines = text.split("\n");
-    lines.forEach((line, i) => {
-      if (i === lines.length - 1 && line === "" && lines.length > 1) return;
-      const row = document.createElement("div");
-      row.className = "term-line" + (cls ? " " + cls : "");
-      row.textContent = line;
-      out.appendChild(row);
+    const parts = text.split("\n");
+    parts.forEach((part, i) => {
+      if (part !== "") ensureTermLine(cls).textContent += part;
+      if (i < parts.length - 1) openTermLine = null; // a newline followed this part
     });
+    const out = el("terminalOutput");
     out.scrollTop = out.scrollHeight;
   }
 
@@ -336,12 +355,33 @@
   }
 
   socket.on("run_output", (data) => {
-    const clsMap = { stderr: "line-stderr", error: "line-error", system: "line-system" };
+    const clsMap = { stderr: "line-stderr", error: "line-error", system: "line-system", stdin: "line-stdin" };
     appendTermLine(data.text, clsMap[data.stream]);
+  });
+
+  // Tracks which scope ("all" or "local") currently has a live process
+  // waiting on input, so the input box knows where to route what you type.
+  let activeRunScope = null;
+  socket.on("run_started", (data) => {
+    activeRunScope = data.scope;
+    el("runInputRow").classList.remove("hidden");
+    el("runInput").focus();
   });
   socket.on("run_done", (data) => {
     const btn = document.getElementById(data.scope === "all" ? "runBtn" : "runLocalBtn");
     if (btn) btn.disabled = false;
+    if (activeRunScope === data.scope) {
+      activeRunScope = null;
+      el("runInputRow").classList.add("hidden");
+    }
+  });
+
+  el("runInput").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !activeRunScope) return;
+    e.preventDefault();
+    const text = el("runInput").value;
+    socket.emit("run_input", { text, scope: activeRunScope });
+    el("runInput").value = "";
   });
 
   const runBtnEl = document.getElementById("runBtn");
@@ -405,7 +445,7 @@
       if (!name) return;
       fetch("/api/new", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({ path: name, type }),
       }).then((r) => {
         if (r.ok) {
@@ -440,7 +480,9 @@
   }
 
   const PRESENCE_VISIBLE = 3;
+  let lastPresenceList = [];
   socket.on("presence", (list) => {
+    lastPresenceList = list;
     const target = el("presenceList");
     if (!list.length) { target.textContent = ""; return; }
     const shown = list.slice(0, PRESENCE_VISIBLE);
@@ -455,7 +497,85 @@
       html += ` <span class="presence-more" title="${escapeHtml(allNames)}">+${extra}</span>`;
     }
     target.innerHTML = html;
+    renderParticipants(list);
+    renderPromoteSelect(list);
   });
+
+  function renderParticipants(list) {
+    const target = el("participantsList");
+    const label = el("participantsLabel");
+    if (!target) return;
+    if (label) label.textContent = `Participants — ${list.length} online`;
+    // The list itself just scrolls (see .participants-list in style.css),
+    // so this works the same whether there are 3 people or 300 — nothing
+    // gets hidden behind a hover tooltip like the topbar's compact version.
+    target.innerHTML = list.map((u) => {
+      const hostTag = u.is_host ? ' <span class="presence-host">(host)</span>' : "";
+      return `<div class="participant-row">${escapeHtml(u.username)}${hostTag}</div>`;
+    }).join("") || '<div class="participant-row">Just you.</div>';
+  }
+
+  function renderPromoteSelect(list) {
+    const select = el("promoteHostSelect");
+    if (!select) return;
+    const previous = select.value;
+    const candidates = list.filter((u) => !u.is_host);
+    select.innerHTML = candidates
+      .map((u) => `<option value="${escapeHtml(u.username)}">${escapeHtml(u.username)}</option>`)
+      .join("");
+    if (candidates.some((u) => u.username === previous)) select.value = previous;
+  }
+
+  // ---------------- Host status (main host or promoted) ----------------
+  function applyHostUI(isHost) {
+    window.__IS_HOST__ = isHost;
+    document.body.classList.toggle("is-host", isHost);
+  }
+  applyHostUI(window.__IS_HOST__);
+  socket.on("host_status_changed", (data) => applyHostUI(!!data.is_host));
+
+  const promoteHostBtn = el("promoteHostBtn");
+  if (promoteHostBtn) {
+    promoteHostBtn.addEventListener("click", () => {
+      const select = el("promoteHostSelect");
+      if (!select || !select.value) return;
+      socket.emit("promote_host", { username: select.value });
+    });
+  }
+
+  const revealPasswordBtn = el("revealPasswordBtn");
+  if (revealPasswordBtn) {
+    revealPasswordBtn.addEventListener("click", () => {
+      fetch("/api/room-info").then((r) => r.json()).then((data) => {
+        el("roomPasswordValue").textContent = data.password;
+      });
+    });
+  }
+
+  // ---------------- Per-file edit history ----------------
+  function loadFileHistory(path) {
+    const target = el("historyList");
+    if (!target) return;
+    fetch("/api/history?path=" + encodeURIComponent(path)).then((r) => r.json()).then((list) => {
+      if (!list.length) { target.innerHTML = '<div class="history-row">No edits yet.</div>'; return; }
+      target.innerHTML = list.map((h) => {
+        const when = new Date(h.ts * 1000).toLocaleString();
+        return `<div class="history-row"><span>${escapeHtml(h.username)}</span> <span class="history-time">${when}</span></div>`;
+      }).join("");
+    });
+  }
+
+  const fileHistoryBtn = el("fileHistoryBtn");
+  if (fileHistoryBtn) {
+    fileHistoryBtn.addEventListener("click", () => {
+      if (!currentPath) return;
+      el("historyPanelTitle").textContent = `History — ${currentPath}`;
+      loadFileHistory(currentPath);
+      el("historyPanel").classList.remove("hidden");
+    });
+  }
+  const closeHistoryBtn = el("closeHistory");
+  if (closeHistoryBtn) closeHistoryBtn.addEventListener("click", () => el("historyPanel").classList.add("hidden"));
 
 function applyTheme(theme, persist) {
     document.body.classList.remove("theme-dark", "theme-light");
@@ -486,7 +606,14 @@ function applyTheme(theme, persist) {
     b.addEventListener("click", () => applyLayout(b.dataset.layout));
   });
 
-  el("settingsBtn").addEventListener("click", () => el("settingsPanel").classList.toggle("hidden"));
+  el("settingsBtn").addEventListener("click", () => {
+    const panel = el("settingsPanel");
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) {
+      renderParticipants(lastPresenceList);
+      renderPromoteSelect(lastPresenceList);
+    }
+  });
   el("closeSettings").addEventListener("click", () => el("settingsPanel").classList.add("hidden"));
 
   function applySidebarCollapsed(collapsed) {
