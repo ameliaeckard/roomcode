@@ -160,11 +160,20 @@ a:hover { color: var(--text-bright); }
 .btn-run:disabled:hover { background: var(--bg); color: var(--green); }
 .btn-small { padding: 4px 8px; font-size: 11px; }
 
-.host-only { display: none; }
-body.is-host .host-only { display: inline-flex; }
+/* !important here because .host-only/.main-host-only are applied to elements
+   that also carry their own base display rule (.btn, .setting-section, ...)
+   declared later in this file -- without it, the cascade order of whichever
+   base rule happens to come after this one silently wins and the element
+   leaks through to users who shouldn't see it (this bit us once already:
+   .setting-section came after this block and overrode the hide). All
+   elements using these classes are flex items inside an already-flex
+   parent, so forcing "flex" doesn't affect layout even for elements that
+   would otherwise want inline-flex or block. */
+.host-only { display: none !important; }
+body.is-host .host-only { display: flex !important; }
 
-.main-host-only { display: none; }
-body.is-main-host .main-host-only { display: block; }
+.main-host-only { display: none !important; }
+body.is-main-host .main-host-only { display: flex !important; }
 
 .current-hosts-list { display: flex; flex-direction: column; gap: 4px; }
 .current-host-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
