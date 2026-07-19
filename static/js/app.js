@@ -40,6 +40,55 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
     tabSize: 4,
     indentUnit: 4,
     mode: "null",
+    // CodeMirror's default keymap binds Insert to toggle overwrite mode --
+    // if that gets hit by accident, typing starts replacing the character
+    // ahead of the cursor instead of inserting. Always stay in insert mode.
+    extraKeys: { Insert: false },
+  });
+
+  // Line-comment prefix per CodeMirror mode name (mirrors CODEMIRROR_MODES
+  // in server.py). Modes with no simple single-line comment syntax are
+  // left out -- "/" just types a literal slash for those, same as normal.
+  const LINE_COMMENT_BY_MODE = {
+    python: "#", ruby: "#", shell: "#", yaml: "#", null: "#",
+    javascript: "//", jsx: "//", go: "//",
+    "text/x-csrc": "//", "text/x-c++src": "//", "text/x-java": "//",
+    sql: "--",
+  };
+
+  /** Toggle a line-comment prefix on every selected line (or do nothing without a selection). */
+  function toggleLineComments() {
+    if (!cm.somethingSelected()) return;
+    const prefix = LINE_COMMENT_BY_MODE[cm.getOption("mode")];
+    if (!prefix) return;
+    const from = cm.getCursor("from");
+    const to = cm.getCursor("to");
+    const lastLine = to.ch === 0 && to.line > from.line ? to.line - 1 : to.line;
+    const lines = [];
+    for (let i = from.line; i <= lastLine; i++) lines.push(cm.getLine(i));
+    const commentable = lines.filter((l) => l.trim() !== "");
+    const allCommented = commentable.length > 0 && commentable.every((l) => l.trimStart().startsWith(prefix));
+    cm.operation(() => {
+      for (let i = from.line; i <= lastLine; i++) {
+        const line = cm.getLine(i);
+        if (line.trim() === "") continue;
+        if (allCommented) {
+          const idx = line.indexOf(prefix);
+          if (idx === -1) continue;
+          let end = idx + prefix.length;
+          if (line[end] === " ") end += 1;
+          cm.replaceRange("", { line: i, ch: idx }, { line: i, ch: end });
+        } else {
+          cm.replaceRange(`${prefix} `, { line: i, ch: 0 }, { line: i, ch: 0 });
+        }
+      }
+    });
+  }
+  cm.on("keydown", (instance, e) => {
+    if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && cm.somethingSelected()) {
+      e.preventDefault();
+      toggleLineComments();
+    }
   });
 
   socket.on("tree_update", loadTree);
@@ -171,10 +220,19 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
       row.dataset.path = node.path;
       row.draggable = true;
       const icon = node.type === "dir" ? "&#9656;" : "-";
+      const addHtml = node.type === "dir" ? '<span class="tree-add" title="New file in this folder">+</span>' : "";
       const deleteHtml = node.owned ? '<span class="tree-delete" title="Delete">x</span>' : "";
-      row.innerHTML = `<span class="tree-icon">${icon}</span><span class="tree-label"></span>${deleteHtml}`;
+      row.innerHTML = `<span class="tree-icon">${icon}</span><span class="tree-label"></span>${addHtml}${deleteHtml}`;
       row.querySelector(".tree-label").textContent = node.name;
       wrap.appendChild(row);
+
+      const addEl = row.querySelector(".tree-add");
+      if (addEl) {
+        addEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          startCreateItem("file", node.path);
+        });
+      }
 
       row.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/plain", node.path);
@@ -498,11 +556,23 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
   });
 
   /**
-   * Inject a new-item input row at the top of the file tree and create the item on commit.
+   * Inject a new-item input row and create the item on commit.
    * @param {"file"|"dir"} type
+   * @param {string} [parentPath] - if given, the item is created inside this folder
+   *   (which is auto-expanded) instead of at the tree root.
    */
-  function startCreateItem(type) {
-    const container = el("fileTree");
+  function startCreateItem(type, parentPath = "") {
+    let container = el("fileTree");
+    if (parentPath) {
+      const parentRow = document.querySelector(`.tree-row[data-path="${CSS.escape(parentPath)}"]`);
+      const childrenDiv = parentRow && parentRow.nextElementSibling;
+      if (childrenDiv && childrenDiv.classList.contains("tree-children")) {
+        childrenDiv.style.display = "flex";
+        const iconEl = parentRow.querySelector(".tree-icon");
+        if (iconEl) iconEl.innerHTML = "&#9662;";
+        container = childrenDiv;
+      }
+    }
     const existingPending = container.querySelector(".tree-row.editing");
     if (existingPending) existingPending.closest(".tree-node").remove();
 
@@ -530,14 +600,15 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
       const name = input.value.trim();
       cleanup();
       if (!name) return;
+      const fullPath = parentPath ? `${parentPath}/${name}` : name;
       fetch("/api/new", {
         method: "POST",
         headers: jsonHeaders(),
-        body: JSON.stringify({ path: name, type }),
+        body: JSON.stringify({ path: fullPath, type }),
       }).then((r) => {
         if (r.ok) {
           loadTree();
-          if (type === "file") openFile(name);
+          if (type === "file") openFile(fullPath);
         } else {
           alert("Couldn't create that item; it may already exist.");
         }
@@ -776,7 +847,9 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
   function applyLockState(locked) {
     roomLocked = locked;
     const iAmLocked = locked && !window.__IS_HOST__;
-    cm.setOption("readOnly", iAmLocked);
+    // "nocursor" (rather than plain true) also stops a locked-out user from
+    // placing/seeing their own cursor in the editor at all, not just typing.
+    cm.setOption("readOnly", iAmLocked ? "nocursor" : false);
     el("editorPane").classList.toggle("read-only", iAmLocked);
     const indicator = document.getElementById("lockIndicator");
     if (indicator) indicator.classList.toggle("hidden", !locked);

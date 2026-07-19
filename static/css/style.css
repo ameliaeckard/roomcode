@@ -231,7 +231,9 @@ body.is-main-host .main-host-only { display: flex !important; }
 .tree-row.active .tree-icon { color: #ffffff; }
 .tree-label { display: flex; flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .tree-children { display: flex; flex-direction: column; padding-left: 14px; }
-.tree-delete { display: flex; margin-left: auto; opacity: 0; color: var(--red); font-size: 12px; }
+.tree-add { display: flex; margin-left: auto; opacity: 0; color: var(--accent); font-size: 12px; padding: 0 2px; }
+.tree-row:hover .tree-add { opacity: 1; }
+.tree-delete { display: flex; opacity: 0; color: var(--red); font-size: 12px; }
 .tree-row:hover .tree-delete { opacity: 1; }
 .tree-row.editing:hover { background: none; color: var(--text); }
 .tree-rename-input {
