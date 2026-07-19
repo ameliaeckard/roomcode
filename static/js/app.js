@@ -187,7 +187,7 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
         body: JSON.stringify({ path: node.path, newName }),
       }).then((r) => {
         if (r.ok) loadTree();
-        else alert("Couldn't rename that - the name may already be taken.");
+        else alert("Couldn't rename that. The name may already be taken.");
       });
     }
     function cancel() {
@@ -673,7 +673,7 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
     const target = el("participantsList");
     const label = el("participantsLabel");
     if (!target) return;
-    if (label) label.textContent = `Participants - ${list.length} online`;
+    if (label) label.textContent = `Participants (${list.length} online)`;
     target.innerHTML = list.map((u) => {
       const hostTag = u.is_host ? ' <span class="presence-host">(host)</span>' : "";
       return `<div class="participant-row">${escapeHtml(u.username)}${hostTag}</div>`;
@@ -769,7 +769,7 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
   if (fileHistoryBtn) {
     fileHistoryBtn.addEventListener("click", () => {
       if (!currentPath) return;
-      el("historyPanelTitle").textContent = `History - ${currentPath}`;
+      el("historyPanelTitle").textContent = `History: ${currentPath}`;
       loadFileHistory(currentPath);
       el("historyPanel").classList.remove("hidden");
     });

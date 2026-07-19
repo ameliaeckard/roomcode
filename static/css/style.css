@@ -72,17 +72,17 @@ a:hover { color: var(--text-bright); }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 40px;
+  justify-content: flex-start;
+  gap: 64px;
   background: var(--bg-elevated);
   border-right: 1px solid var(--border);
-  padding: 40px;
+  padding: 15vh 56px 40px;
   text-align: center;
 }
-.join-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.join-logo { font-size: 32px; color: var(--accent); font-weight: 700; }
-.join-tagline { color: var(--text-dim); font-size: 13px; max-width: 280px; margin: 0; }
-.join-mode-tabs { display: flex; flex-direction: column; gap: 10px; width: 220px; }
+.join-brand { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.join-logo { font-size: 48px; color: var(--accent); font-weight: 800; letter-spacing: -0.01em; }
+.join-tagline { color: var(--text-dim); font-size: 14px; line-height: 1.6; max-width: 300px; margin: 0; }
+.join-mode-tabs { display: flex; flex-direction: column; gap: 12px; width: 240px; }
 .join-mode-btn {
   display: flex;
   justify-content: center;
@@ -90,66 +90,92 @@ a:hover { color: var(--text-bright); }
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  padding: 12px;
-  font-size: 14px;
+  padding: 16px;
+  font-size: 15px;
   font-weight: 600;
 }
 .join-mode-btn:hover { border-color: var(--accent); color: var(--accent); }
 .join-mode-btn.active { background: var(--accent); color: #ffffff; border-color: var(--accent); }
 
+.join-links { display: flex; flex-direction: row; gap: 8px; width: 240px; }
+.join-link-btn {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  text-align: center;
+}
+.join-link-btn:hover { border-color: var(--accent); color: var(--accent); }
+
 .join-right {
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 15vh 72px 40px;
 }
-.join-right h2 { font-size: 18px; margin: 0 0 6px; color: var(--text-bright); }
-.join-sub { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
+.join-right h2 { font-size: 34px; margin: 0 0 12px; color: var(--text-bright); font-weight: 800; letter-spacing: -0.01em; }
+.join-sub { color: var(--text-dim); font-size: 14px; margin-bottom: 32px; }
 .join-error {
   display: flex;
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   background: var(--bg);
   color: var(--red);
   border: 1px solid var(--red);
-  padding: 8px;
+  padding: 10px 12px;
   font-size: 13px;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
   box-sizing: border-box;
 }
-.join-form { display: flex; flex-direction: column; gap: 6px; text-align: left; width: 100%; max-width: 360px; }
-.join-form label { display: flex; font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+.join-form { display: flex; flex-direction: column; gap: 6px; text-align: left; width: 100%; max-width: 380px; }
+.join-form label {
+  display: flex;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  margin-top: 20px;
+}
 .join-form input[type="text"], .join-form input[type="password"], .join-form input[type="file"] {
   display: flex;
   background: var(--input-bg);
   border: 1px solid var(--border);
   color: var(--text-bright);
-  padding: 9px 10px;
-  font-size: 14px;
+  padding: 13px 14px;
+  font-size: 15px;
+  margin-top: 8px;
 }
 .join-form input[type="file"] { cursor: pointer; }
 .join-form button {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-top: 18px;
+  margin-top: 32px;
   background: var(--accent);
   color: #ffffff;
   border: 1px solid var(--accent);
-  padding: 10px;
-  font-size: 14px;
-  font-weight: 600;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 700;
 }
 .join-form button:hover { background: var(--bg); color: var(--accent); }
-.join-hint { color: var(--text-dim); font-size: 11px; margin: 2px 0 0; }
+.join-hint { color: var(--text-dim); font-size: 11px; margin: 6px 0 0; }
 .join-checkbox-row {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 22px;
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -161,11 +187,14 @@ a:hover { color: var(--text-bright); }
     flex: 0 0 auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
-    padding: 24px;
-    gap: 24px;
+    padding: 40px 24px;
+    gap: 36px;
   }
+  .join-logo { font-size: 38px; }
   .join-mode-tabs { flex-direction: row; width: 100%; max-width: 320px; }
-  .join-right { padding: 24px; }
+  .join-links { width: 100%; max-width: 320px; }
+  .join-right { padding: 40px 24px; }
+  .join-right h2 { font-size: 26px; }
 }
 
 #app { display: flex; flex-direction: column; height: 100vh; flex: 1; }

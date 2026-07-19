@@ -446,7 +446,7 @@ def create():
             root_dir = None
             with sessions_lock:
                 if pw in password_index:
-                    error = "That password is already in use - pick a different one."
+                    error = "That password is already in use. Pick a different one."
                 else:
                     sid = generate_session_id()
                     root_dir = Config.sessions_dir / sid
@@ -488,7 +488,7 @@ def join():
         _check_csrf()
         ip = request.remote_addr or ""
         if not _is_join_rate_ok(ip):
-            error = "Too many attempts - please wait a minute."
+            error = "Too many attempts. Please wait a minute."
         else:
             pw = request.form.get("password", "")
             name = request.form.get("username", "").strip()[:32]
@@ -509,7 +509,7 @@ def join():
                         for u in connected_users.values()
                     )
                 if name_taken:
-                    error = "That name is already taken in this session - pick another."
+                    error = "That name is already taken in this session. Pick another."
                 else:
                     session["authed"] = True
                     session["username"] = name

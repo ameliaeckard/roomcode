@@ -30,6 +30,11 @@
       <button type="button" class="join-mode-btn tab-btn{% if active_tab == 'create' %} active{% endif %}" data-tab="create">Create Room</button>
       <button type="button" class="join-mode-btn tab-btn{% if active_tab == 'join' %} active{% endif %}" data-tab="join">Join Room</button>
     </div>
+    <div class="join-links">
+      <a href="https://github.com/ameliaeckard/roomcode" target="_blank" rel="noopener" class="join-link-btn">GitHub</a>
+      <a href="https://ameliaeckard.com" target="_blank" rel="noopener" class="join-link-btn">Website</a>
+      <a href="https://ameliaeckard.com/bugs" target="_blank" rel="noopener" class="join-link-btn">Report a Bug</a>
+    </div>
   </div>
 
   <div class="join-right">
@@ -54,7 +59,7 @@
 
     <div class="tab-panel" data-panel="create"{% if active_tab != 'create' %} style="display:none"{% endif %}>
       <h2>Create a session</h2>
-      <p class="join-sub">Start a new session - you'll join as its host.</p>
+      <p class="join-sub">Start a new session. You'll join as its host.</p>
       <form method="POST" action="{{ url_for('create') }}" class="join-form" enctype="multipart/form-data">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <label for="create-password">Session password</label>
