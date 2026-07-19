@@ -63,34 +63,65 @@ a:hover { color: var(--text-bright); }
 
 .join-body {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: row;
   flex: 1;
+  min-height: 100vh;
 }
-.join-card {
-  width: 360px;
+.join-left {
+  flex: 0 0 40%;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  padding: 32px;
+  border-right: 1px solid var(--border);
+  padding: 40px;
   text-align: center;
 }
-.join-logo { display: flex; justify-content: center; font-size: 28px; color: var(--accent); font-weight: 700; margin-bottom: 4px; }
-.join-card h1 { font-size: 20px; margin: 0 0 6px; color: var(--text-bright); }
+.join-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.join-logo { font-size: 32px; color: var(--accent); font-weight: 700; }
+.join-tagline { color: var(--text-dim); font-size: 13px; max-width: 280px; margin: 0; }
+.join-mode-tabs { display: flex; flex-direction: column; gap: 10px; width: 220px; }
+.join-mode-btn {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.join-mode-btn:hover { border-color: var(--accent); color: var(--accent); }
+.join-mode-btn.active { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+
+.join-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.join-right h2 { font-size: 18px; margin: 0 0 6px; color: var(--text-bright); }
 .join-sub { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
 .join-error {
   display: flex;
+  width: 100%;
+  max-width: 360px;
   background: var(--bg);
   color: var(--red);
   border: 1px solid var(--red);
   padding: 8px;
   font-size: 13px;
   margin-bottom: 14px;
+  box-sizing: border-box;
 }
-.join-form { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.join-form { display: flex; flex-direction: column; gap: 6px; text-align: left; width: 100%; max-width: 360px; }
 .join-form label { display: flex; font-size: 12px; color: var(--text-dim); margin-top: 8px; }
-.join-form input {
+.join-form input[type="text"], .join-form input[type="password"], .join-form input[type="file"] {
   display: flex;
   background: var(--input-bg);
   border: 1px solid var(--border);
@@ -98,6 +129,7 @@ a:hover { color: var(--text-bright); }
   padding: 9px 10px;
   font-size: 14px;
 }
+.join-form input[type="file"] { cursor: pointer; }
 .join-form button {
   display: flex;
   justify-content: center;
@@ -111,6 +143,30 @@ a:hover { color: var(--text-bright); }
   font-weight: 600;
 }
 .join-form button:hover { background: var(--bg); color: var(--accent); }
+.join-hint { color: var(--text-dim); font-size: 11px; margin: 2px 0 0; }
+.join-checkbox-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.join-checkbox-row input { flex: 0 0 auto; width: auto; margin-top: 2px; }
+
+@media (max-width: 720px) {
+  .join-body { flex-direction: column; }
+  .join-left {
+    flex: 0 0 auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 24px;
+    gap: 24px;
+  }
+  .join-mode-tabs { flex-direction: row; width: 100%; max-width: 320px; }
+  .join-right { padding: 24px; }
+}
 
 #app { display: flex; flex-direction: column; height: 100vh; flex: 1; }
 

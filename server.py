@@ -42,6 +42,15 @@ class Config:
 
 app = Flask(__name__)
 app.secret_key = uuid.uuid4().hex
+app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # covers the optional project-zip upload on /create
+
+
+@app.errorhandler(413)
+def _upload_too_large(e):
+    return render_template(
+        "login.html", active_tab="create",
+        error="That upload is too large (max 60 MB total).",
+    ), 413
 
 
 def _is_allowed_origin(origin):
@@ -178,6 +187,56 @@ CODEMIRROR_MODES = {
 }
 
 EXCLUDED_DIR_NAMES = {".git", "__pycache__", "node_modules", ".venv", "venv", ".idea", ".vscode"}
+
+MAX_ZIP_FILE_COUNT = 2000
+MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _extract_project_zip(file_storage, sess, owner_username):
+    """Safely extract an uploaded zip into sess's root_dir, recording
+    owner_username as the creator of every extracted path. Returns an error
+    message string on failure (nothing extracted), or None on success.
+
+    Guards against zip-slip (paths that escape root_dir), zip bombs (caps
+    total uncompressed size and file count), and pointlessly extracting
+    huge dependency folders (.git, node_modules, etc. are skipped, same as
+    what the file tree already hides)."""
+    try:
+        zf = zipfile.ZipFile(file_storage.stream)
+    except zipfile.BadZipFile:
+        return "That doesn't look like a valid .zip file."
+
+    root_dir = sess["root_dir"].resolve()
+    infos = [i for i in zf.infolist() if not i.is_dir()]
+    if len(infos) > MAX_ZIP_FILE_COUNT:
+        return f"That zip has too many files (max {MAX_ZIP_FILE_COUNT})."
+
+    total = 0
+    to_extract = []  # (info, rel_path)
+    for info in infos:
+        parts = Path(info.filename).parts
+        if not parts or any(p == ".." for p in parts):
+            return "That zip contains invalid paths and can't be extracted."
+        if os.path.isabs(info.filename):
+            return "That zip contains absolute paths and can't be extracted."
+        if any(p in EXCLUDED_DIR_NAMES or p.startswith(".") for p in parts[:-1]):
+            continue  # skip .git/, node_modules/, __pycache__/, etc.
+        rel = "/".join(parts)
+        target = (root_dir / rel).resolve()
+        if target != root_dir and root_dir not in target.parents:
+            return "That zip contains invalid paths and can't be extracted."
+        total += info.file_size
+        if total > MAX_ZIP_UNCOMPRESSED_BYTES:
+            return f"That zip is too large once extracted (max {MAX_ZIP_UNCOMPRESSED_BYTES // (1024 * 1024)} MB)."
+        to_extract.append((info, rel))
+
+    for info, rel in to_extract:
+        target = root_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info) as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        sess.setdefault("ownership", {})[rel] = owner_username
+    return None
 
 RUN_ENV_PASSTHROUGH = {"path", "systemroot", "windir", "comspec", "pathext", "lang", "lc_all", "temp", "tmp"}
 RUN_CPU_SECONDS = 30
@@ -373,11 +432,18 @@ def create():
         _check_csrf()
         pw = request.form.get("password", "").strip()
         name = request.form.get("username", "").strip()[:32]
+        agreed = request.form.get("agree") == "on"
+        lock_on_create = request.form.get("lock_on_create") == "on"
+        zip_file = request.files.get("project_zip")
         if not pw:
             error = "Choose a session password."
         elif not name:
             error = "Please enter your name."
+        elif not agreed:
+            error = "Please confirm the session agreement to continue."
         else:
+            sid = None
+            root_dir = None
             with sessions_lock:
                 if pw in password_index:
                     error = "That password is already in use - pick a different one."
@@ -386,12 +452,24 @@ def create():
                     root_dir = Config.sessions_dir / sid
                     root_dir.mkdir(parents=True, exist_ok=True)
                     sessions[sid] = {
-                        "password": pw, "root_dir": root_dir, "locked": False,
+                        "password": pw, "root_dir": root_dir, "locked": lock_on_create,
                         "ownership": {}, "promoted_hosts": set(),
                         "ydocs": {}, "dirty_docs": set(), "last_editor": {},
                         "history": [], "awareness_states": {},
                     }
                     password_index[pw] = sid
+
+            if not error and zip_file and zip_file.filename:
+                zip_error = _extract_project_zip(zip_file, sessions[sid], name)
+                if zip_error:
+                    # Roll back the session rather than leave an empty,
+                    # orphaned one sitting on a password nobody can use yet.
+                    with sessions_lock:
+                        sessions.pop(sid, None)
+                        password_index.pop(pw, None)
+                    shutil.rmtree(root_dir, ignore_errors=True)
+                    error = zip_error
+
             if not error:
                 session["authed"] = True
                 session["username"] = name
@@ -414,6 +492,7 @@ def join():
         else:
             pw = request.form.get("password", "")
             name = request.form.get("username", "").strip()[:32]
+            agreed = request.form.get("agree") == "on"
             with sessions_lock:
                 sid = password_index.get(pw)
             if not sid:
@@ -421,6 +500,8 @@ def join():
                 error = "Incorrect password."
             elif not name:
                 error = "Please enter a name."
+            elif not agreed:
+                error = "Please confirm the session agreement to continue."
             else:
                 with users_lock:
                     name_taken = any(

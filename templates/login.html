@@ -1,7 +1,8 @@
 <!--
   login.html
-  updated 2026-07-14 by Amelia Eckard
-  Join/Create landing page - tabbed form for entering a session password and display name.
+  updated 2026-07-19 by Amelia Eckard
+  Split landing page: branding + mode switch on the left, the active
+  create/join form on the right.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -19,16 +20,23 @@
   document.body.classList.add("theme-" + theme);
 })();
 </script>
-  <div class="join-card">
-    <h1>RoomCode</h1>
-    <div class="seg">
-      <button type="button" class="seg-btn tab-btn{% if active_tab == 'join' %} active{% endif %}" data-tab="join">Join Room</button>
-      <button type="button" class="seg-btn tab-btn{% if active_tab == 'create' %} active{% endif %}" data-tab="create">Create Room</button>
-    </div>
 
+  <div class="join-left">
+    <div class="join-brand">
+      <div class="join-logo">RoomCode</div>
+      <p class="join-tagline">Live, collaborative coding sessions. Create a room or join one that's already running.</p>
+    </div>
+    <div class="join-mode-tabs">
+      <button type="button" class="join-mode-btn tab-btn{% if active_tab == 'create' %} active{% endif %}" data-tab="create">Create Room</button>
+      <button type="button" class="join-mode-btn tab-btn{% if active_tab == 'join' %} active{% endif %}" data-tab="join">Join Room</button>
+    </div>
+  </div>
+
+  <div class="join-right">
     {% if error %}<div class="join-error">{{ error }}</div>{% endif %}
 
     <div class="tab-panel" data-panel="join"{% if active_tab != 'join' %} style="display:none"{% endif %}>
+      <h2>Join a session</h2>
       <p class="join-sub">Enter the session password and a name to join.</p>
       <form method="POST" action="{{ url_for('join') }}" class="join-form">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
@@ -36,18 +44,37 @@
         <input type="password" id="join-password" name="password" required>
         <label for="join-username">Your name</label>
         <input type="text" id="join-username" name="username" maxlength="32" required>
+        <label class="join-checkbox-row">
+          <input type="checkbox" name="agree" required>
+          <span>I'll be respectful and won't run anything malicious in this session.</span>
+        </label>
         <button type="submit">Join session</button>
       </form>
     </div>
 
     <div class="tab-panel" data-panel="create"{% if active_tab != 'create' %} style="display:none"{% endif %}>
+      <h2>Create a session</h2>
       <p class="join-sub">Start a new session - you'll join as its host.</p>
-      <form method="POST" action="{{ url_for('create') }}" class="join-form">
+      <form method="POST" action="{{ url_for('create') }}" class="join-form" enctype="multipart/form-data">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <label for="create-password">Session password</label>
         <input type="password" id="create-password" name="password" required>
         <label for="create-username">Your name</label>
         <input type="text" id="create-username" name="username" maxlength="32" required>
+
+        <label for="create-zip">Start with existing files (optional)</label>
+        <input type="file" id="create-zip" name="project_zip" accept=".zip,application/zip">
+        <p class="join-hint">A .zip of folders/files to seed the session with (up to 50 MB).</p>
+
+        <label class="join-checkbox-row">
+          <input type="checkbox" id="create-lock" name="lock_on_create">
+          <span>Lock editing right away (you can unlock it yourself once everyone's ready)</span>
+        </label>
+        <label class="join-checkbox-row">
+          <input type="checkbox" name="agree" required>
+          <span>I'll be respectful and won't run anything malicious in this session.</span>
+        </label>
+
         <button type="submit">Create session</button>
       </form>
     </div>
