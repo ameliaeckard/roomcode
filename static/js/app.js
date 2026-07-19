@@ -10,7 +10,17 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
   "use strict";
 
   const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
-  const socket = io({ auth: { csrf_token: csrfToken } });
+  const socket = io({
+    auth: { csrf_token: csrfToken },
+    // The dev server's WebSocket handling can drop a connection silently
+    // (no error shown to the user, edits just stop reaching the server) --
+    // reconnect aggressively rather than leaving someone editing into a
+    // void, and force a full state resync below once back online.
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 5000,
+  });
   let currentPath = null;
   let currentMode = "null";
   let cm = null;
@@ -33,6 +43,25 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from "/static/
   });
 
   socket.on("tree_update", loadTree);
+
+  // Surface connection drops instead of failing silently, and force a full
+  // Yjs resync on reconnect -- a dropped connection means edits may have
+  // been missed in both directions while offline, and the local Yjs doc
+  // alone can't tell that happened.
+  let hasConnectedBefore = false;
+  function setConnectionStatus(connected) {
+    const indicator = el("connectionStatus");
+    if (indicator) indicator.classList.toggle("hidden", connected);
+  }
+  socket.on("connect", () => {
+    setConnectionStatus(true);
+    if (hasConnectedBefore && currentPath) {
+      setupYjsState(currentPath);
+      socket.emit("open_file", { path: currentPath });
+    }
+    hasConnectedBefore = true;
+  });
+  socket.on("disconnect", () => setConnectionStatus(false));
 
   /** @returns {Object} headers for JSON API requests including CSRF token */
   const jsonHeaders = () => ({ "Content-Type": "application/json", "X-CSRF-Token": csrfToken });
